@@ -1,0 +1,2321 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  #veil {
+    position: fixed;
+    inset: 0;
+    /* 面板本身：占屏幕约三分之二，圆角浮动，透明度可调 */
+    background: rgba(20, 20, 24, var(--panel-alpha, 0.92));
+    backdrop-filter: blur(34px) saturate(150%);
+    -webkit-backdrop-filter: blur(34px) saturate(150%);
+    /* backdrop-filter 配 border-radius 时圆角裁剪会失效（四个角只裁到一部分），
+       用 clip-path 兜住，边框改成内阴影免得被裁掉一半 */
+    border-radius: 18px;
+    clip-path: inset(0 round 18px);
+    box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    overflow: hidden;
+    animation: fadeIn 0.16s ease;
+  }
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+
+  #topbar {
+    margin-top: 26px;
+    width: 100%;
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+  }
+  #searchWrap {
+    width: 420px;
+  }
+
+  /* 排序按钮：和右边 ⊙ 外观按钮同一套视觉，放在它左边 */
+  #sortBtn {
+    position: absolute;
+    top: 44px;
+    right: 138px;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.72);
+    cursor: pointer;
+    z-index: 6;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  #sortBtn:hover,
+  #sortBtn.on { background: rgba(255, 255, 255, 0.18); color: #fff; }
+  #sortBtn svg { width: 18px; height: 18px; }
+
+  /* 排序面板：跟透明度面板同风格，挂在按钮下面 */
+  #sortMenu {
+    position: absolute;
+    top: 92px;
+    right: 138px;
+    width: 186px;
+    padding: 12px 10px 10px;
+    border-radius: 12px;
+    background: rgba(30, 30, 33, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5);
+    z-index: 7;
+    display: none;
+  }
+  #sortMenu.on { display: block; }
+  #sortMenu .sTitle {
+    font-size: 11px;
+    letter-spacing: .5px;
+    color: rgba(255, 255, 255, 0.42);
+    padding: 0 8px 8px;
+  }
+  #sortMenu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 10px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+  }
+  #sortMenu button:hover { background: rgba(255, 255, 255, 0.13); }
+  #sortMenu .sHint {
+    font-size: 10.5px;
+    line-height: 1.4;
+    color: rgba(255, 255, 255, 0.34);
+    padding: 8px 8px 2px;
+    margin-top: 4px;
+    border-top: 1px solid rgba(255, 255, 255, 0.08);
+  }
+  #tabs {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: 900px;
+  }
+  .tab {
+    font-family: inherit;
+    font-size: 13px;
+    line-height: 1;
+    padding: 8px 16px;
+    border-radius: 999px;
+    /* 底色/文字在下面的主题块里按「面板底色 + 名字颜色」算，这里只是兜底 */
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.75);
+    color: #17171a;
+    cursor: pointer;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+    white-space: nowrap;
+  }
+  .tab:hover { background: rgba(255, 255, 255, 0.92); color: #000; }
+  .tab.active {
+    background: #ffffff;
+    border-color: transparent;
+    color: #1a1a1c;
+    font-weight: 500;
+  }
+  .tab.drop {
+    background: rgba(255, 255, 255, 0.34);
+    border-color: rgba(255, 255, 255, 0.7);
+    color: #fff;
+  }
+  .tab.add {
+    border-style: dashed;
+    color: rgba(255, 255, 255, 0.62);
+  }
+  .tab.locked {
+    background: rgba(0, 0, 0, 0.3);
+    border-color: rgba(255, 255, 255, 0.24);
+    color: rgba(255, 255, 255, 0.62);
+  }
+  .tab.locked.active {
+    background: rgba(255, 255, 255, 0.82);
+    color: #1a1a1c;
+  }
+  .tab svg { vertical-align: -1px; margin-right: 4px; }
+  .group-input {
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    outline: none;
+    width: 168px;
+  }
+  .rename {
+    width: 96px;
+    font-family: inherit;
+    font-size: 12px;
+    line-height: 1.3;
+    text-align: center;
+    padding: 3px 5px;
+    border-radius: 5px;
+    border: 1px solid rgba(255, 255, 255, 0.55);
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    outline: none;
+  }
+  /* 右键菜单：图标一份、分类 tab 一份，共用样式 */
+  .ctxmenu {
+    position: fixed;
+    z-index: 60;
+    min-width: 158px;
+    padding: 6px;
+    border-radius: 11px;
+    background: rgba(32, 32, 36, 0.97);
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+    display: none;
+  }
+  .ctxmenu.on { display: block; }
+  .ctxmenu button {
+    display: block;
+    width: 100%;
+    text-align: left;
+    font-family: inherit;
+    font-size: 13px;
+    padding: 8px 12px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: rgba(255, 255, 255, 0.92);
+    cursor: pointer;
+  }
+  .ctxmenu button:hover { background: rgba(255, 255, 255, 0.13); }
+  .ctxmenu button.danger { color: #ff6b6b; }
+  .ctxmenu button.danger:hover { background: rgba(255, 107, 107, 0.16); }
+  .ctxmenu .divider {
+    height: 1px;
+    margin: 5px 8px;
+    background: rgba(255, 255, 255, 0.12);
+  }
+
+  /* 通用输入对话框：重命名分类 / 设密码 / 解锁 */
+  #dialog {
+    position: fixed;
+    inset: 0;
+    z-index: 80;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.42);
+  }
+  #dialog.on { display: flex; }
+  #pick {
+    position: fixed;
+    inset: 0;
+    z-index: 85;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.32);
+  }
+  #pick.on { display: flex; }
+  #pick .dlg { width: min(520px, 86%); }
+  #pickList {
+    max-height: 46vh;
+    overflow: auto;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    border-radius: 10px;
+    margin-bottom: 12px;
+  }
+  /* .dlg input 的 width:100% 会把勾选框撑满整行，把应用名挤没 —— 必须覆盖 */
+  #pickList input {
+    width: 15px;
+    height: 15px;
+    flex: 0 0 auto;
+    padding: 0;
+    margin: 0;
+    accent-color: #0a84ff;
+  }
+  .prow {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .prow:hover { background: rgba(0, 0, 0, 0.05); }
+  .prow input { pointer-events: auto; }
+  .pname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .pgroup { color: #9a9aa0; font-size: 12px; }
+  #pickFoot { display: flex; align-items: center; gap: 8px; }
+  #pickFoot .gap { flex: 1; }
+
+  /* ---- 拖拽删除垃圾桶 + 批量管理 ---- */
+  #trash {
+    position: absolute;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%) scale(0.92);
+    width: 150px;
+    padding: 13px 10px 11px;
+    border-radius: 14px;
+    border: 2px dashed rgba(230, 90, 90, 0.6);
+    background: rgba(255, 255, 255, 0.96);
+    color: #d93025;
+    text-align: center;
+    font-size: 12.5px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity .15s ease, transform .15s ease, background .15s ease;
+    z-index: 30;
+  }
+  #trash svg { display: block; margin: 0 auto 4px; }
+  body.dragging-app #trash {
+    opacity: 1;
+    pointer-events: auto;
+    transform: translateX(-50%) scale(1);
+  }
+  #trash.hot {
+    background: rgba(255, 107, 107, 0.18);
+    border-color: #ff6b6b;
+    transform: translateX(-50%) scale(1.07);
+  }
+  #batchBar {
+    position: absolute;
+    left: 50%;
+    bottom: 22px;
+    transform: translateX(-50%);
+    display: none;
+    align-items: center;
+    gap: 9px;
+    padding: 9px 13px;
+    border-radius: 14px;
+    background: rgba(32, 33, 36, 0.94);
+    color: #fff;
+    font-size: 13px;
+    z-index: 31;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.22);
+  }
+  body.batch #batchBar { display: flex; }
+  body.batch #trash { display: none; }
+  #batchBar button {
+    border: 0;
+    border-radius: 9px;
+    padding: 7px 13px;
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+    cursor: pointer;
+    font-size: 12.5px;
+  }
+  #batchBar button:hover { background: rgba(255, 255, 255, 0.26); }
+  #batchBar button.danger { background: #e5484d; }
+  #batchBar button.danger:hover { background: #f05a5f; }
+  #batchBar button:disabled { opacity: 0.45; cursor: default; }
+  #batchBar button:disabled:hover { background: #e5484d; }
+  /* 批量模式的勾选角标 */
+  .app { position: relative; }
+  .app .tick {
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 18px;
+    height: 18px;
+    border-radius: 50%;
+    border: 2px solid rgba(120, 120, 128, 0.5);
+    background: rgba(255, 255, 255, 0.9);
+    display: none;
+    z-index: 5;
+  }
+  .app .tick::after {
+    content: '';
+    position: absolute;
+    left: 5px;
+    top: 2px;
+    width: 4px;
+    height: 8px;
+    border: solid #1c7c3c;
+    border-width: 0 2px 2px 0;
+    transform: rotate(45deg);
+    opacity: 0;
+  }
+  .app.sel .tick::after { opacity: 1; }
+  body.batch .app .tick { display: block; }
+  body.batch .app.sel { outline: 2px solid rgba(28, 124, 60, 0.6); outline-offset: 2px; border-radius: 12px; }
+  .dlg {
+    width: 344px;
+    padding: 20px 20px 16px;
+    border-radius: 14px;
+    background: rgba(34, 34, 38, 0.99);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.6);
+  }
+  .dlg h3 { font-size: 14px; font-weight: 600; margin-bottom: 5px; }
+  .dlg .dsub { font-size: 11.5px; color: rgba(255, 255, 255, 0.45); margin-bottom: 12px; min-height: 15px; }
+  .dlg input {
+    width: 100%;
+    padding: 9px 11px;
+    font-family: inherit;
+    font-size: 13px;
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 8px;
+    outline: none;
+  }
+  .dlg input:focus { border-color: rgba(10, 132, 255, 0.7); }
+  .dlg .dbtns { display: flex; gap: 8px; justify-content: flex-end; margin-top: 16px; }
+  .dlg button {
+    padding: 8px 18px;
+    font-family: inherit;
+    font-size: 12.5px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    background: rgba(255, 255, 255, 0.09);
+    color: rgba(255, 255, 255, 0.9);
+    cursor: pointer;
+  }
+  .dlg button:hover { background: rgba(255, 255, 255, 0.16); }
+  .dlg button.primary { background: rgba(10, 132, 255, 0.9); border-color: rgba(10, 132, 255, 1); }
+  .dlg button.primary:hover { background: rgba(10, 132, 255, 1); }
+  .dlg .derr { font-size: 11.5px; color: #ff6b6b; margin-top: 8px; min-height: 15px; }
+  .app.dragging { opacity: 0.35; }
+  .app { cursor: grab; }
+  .app:active { cursor: grabbing; }
+  #search {
+    flex: 1 1 auto;
+    width: 100%;
+    height: 42px;
+    padding: 0 18px;
+    border-radius: 12px;
+    /* 底色/文字在下面的主题块里按「面板底色 + 名字颜色」算，这里只是兜底 */
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.75);
+    color: #17171a;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  #search::placeholder { color: rgba(0, 0, 0, 0.42); }
+  #search:focus {
+    background: rgba(255, 255, 255, 0.9);
+    border-color: rgba(10, 132, 255, 0.85);
+  }
+
+  #gridWrap {
+    flex: 1;
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    padding: 22px 34px 34px;
+    margin-top: 6px;
+  }
+  #gridWrap::-webkit-scrollbar { width: 8px; }
+  #gridWrap::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 4px;
+  }
+
+  #grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(calc(var(--grid-icon, 54px) + 50px), 1fr));
+    gap: 6px 4px;
+    max-width: 1180px;
+    margin: 0 auto;
+  }
+
+  .app {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 6px 10px;
+    border-radius: 14px;
+    cursor: pointer;
+    transition: background 0.14s ease, transform 0.14s ease;
+  }
+  .app:hover { background: rgba(255, 255, 255, 0.10); }
+  .app:active { transform: scale(0.96); }
+
+  .app .ic {
+    width: var(--grid-icon, 54px);
+    height: var(--grid-icon, 54px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    pointer-events: none;
+  }
+  .app .ic img {
+    width: var(--grid-icon, 54px);
+    height: var(--grid-icon, 54px);
+    object-fit: contain;
+    filter: drop-shadow(0 3px 7px rgba(0, 0, 0, 0.35));
+  }
+  .app .ic .fb {
+    width: 46px;
+    height: 46px;
+    border-radius: 11px;
+    background: rgba(255, 255, 255, 0.20);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 20px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.9);
+  }
+  .app .nm {
+    font-size: 12.5px;
+    font-weight: 500;
+    line-height: 1.3;
+    /* 名字恒定纯白，不随面板透明度变淡 */
+    color: #fff;
+    opacity: 1;
+    text-align: center;
+    max-width: 104px;
+    max-height: 2.6em;
+    overflow: hidden;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    word-break: break-word;
+    /* 没有底板，靠多层零模糊阴影堆出描边，再用外扩阴影兜底 */
+    text-shadow:
+      0 0 1px rgba(0, 0, 0, 0.95),
+      0 0 1px rgba(0, 0, 0, 0.95),
+      0 0 2px rgba(0, 0, 0, 0.9),
+      0 1px 3px rgba(0, 0, 0, 0.85),
+      0 0 10px rgba(0, 0, 0, 0.6);
+    pointer-events: none;
+  }
+  .app:hover .nm { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,1), 0 0 4px rgba(0,0,0,0.95), 0 0 12px rgba(0,0,0,0.85); }
+  .app:hover .nm { background: rgba(0, 0, 0, 0.52); }
+
+  #empty {
+    margin-top: 90px;
+    text-align: center;
+    color: rgba(255, 255, 255, 0.55);
+    font-size: 14px;
+    display: none;
+  }
+  /* 快捷方式指向的文件没了：标灰但保留，右键还能改名/移除 */
+  .app.missing .ic { opacity: .32; filter: grayscale(1); }
+  .app.missing .nm { color: rgba(255, 255, 255, 0.32); }
+
+  #settingsBtn {
+    position: absolute;
+    top: 44px;
+    right: 46px;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.72);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+    z-index: 6;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  #settingsBtn:hover { background: rgba(255, 255, 255, 0.18); color: #fff; }
+
+  /* 外观快捷面板：直接调 Dock 透明度和模糊，不用开设置窗 */
+  #toneBtn {
+    position: absolute;
+    top: 44px;
+    right: 92px;
+    width: 38px;
+    height: 38px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 10px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: rgba(255, 255, 255, 0.72);
+    cursor: pointer;
+    z-index: 6;
+    transition: background 0.15s ease, color 0.15s ease;
+  }
+  #toneBtn:hover,
+  #toneBtn.on { background: rgba(255, 255, 255, 0.18); color: #fff; }
+  #toneBtn svg { width: 18px; height: 18px; }
+
+  #tonePanel {
+    position: absolute;
+    top: 92px;
+    right: 46px;
+    width: 268px;
+    padding: 14px 16px 16px;
+    border-radius: 12px;
+    background: rgba(30, 30, 33, 0.97);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5);
+    z-index: 7;
+    display: none;
+  }
+  #tonePanel.on { display: block; }
+  #tonePanel .trow {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12.5px;
+    color: rgba(255, 255, 255, 0.86);
+    margin-bottom: 4px;
+  }
+  #tonePanel .trow .v {
+    color: rgba(255, 255, 255, 0.55);
+    font-variant-numeric: tabular-nums;
+  }
+  #tonePanel .tsep { height: 12px; }
+
+  input[type=range] {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 100%;
+    height: 20px;
+    background: transparent;
+    cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.18);
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #fff;
+    margin-top: -5px;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+  }
+
+  /* 从资源管理器拖东西进来 */
+  body.drop-hover #veil {
+    outline: 2px dashed rgba(10, 132, 255, 0.85);
+    outline-offset: -16px;
+  }
+  #dropTip {
+    position: fixed;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 14px 24px;
+    border-radius: 12px;
+    background: rgba(10, 132, 255, 0.94);
+    color: #fff;
+    font-size: 14px;
+    font-weight: 500;
+    letter-spacing: 0.3px;
+    display: none;
+    pointer-events: none;
+    z-index: 60;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.4);
+  }
+  body.drop-hover #dropTip { display: block; }
+
+  /* ========== 可定制底色：控件颜色跟着底色亮度自动换深/浅 ========== */
+  #veil {
+    background: rgba(var(--panel-rgb, 250, 250, 252), var(--panel-alpha, 0.92));
+    /* clip-path 会裁掉外侧阴影，高光只能用内阴影做：一圈描边 + 顶边亮线 + 底部极淡的沉降 */
+    box-shadow:
+      inset 0 0 0 1px var(--edge, rgba(255, 255, 255, 0.9)),
+      inset 0 1.5px 0 var(--edge-top, rgba(255, 255, 255, 1)),
+      inset 0 -20px 36px rgba(0, 0, 0, 0.035);
+  }
+
+  /* 搜索框：底色/文字跟分类标签、右上角按钮同一套（面板底色 + 名字颜色） */
+  #search {
+    background: var(--tool-bg, rgba(255, 255, 255, 0.78));
+    border-color: var(--tool-line, rgba(0, 0, 0, 0.08));
+    color: var(--tool-ink, #17171a);
+  }
+  #search::placeholder { color: var(--tool-ink-faint, rgba(0, 0, 0, 0.42)); }
+  #search:focus {
+    background: var(--tool-hover-bg, rgba(255, 255, 255, 0.95));
+    border-color: rgba(10, 132, 255, 0.85);
+  }
+
+  /* 分类标签：底色/文字跟随面板底色与名字颜色（变量由 applyPanelAlpha 计算） */
+  .tab {
+    background: var(--tab-bg, rgba(255, 255, 255, 0.78));
+    border-color: var(--tab-line, rgba(0, 0, 0, 0.08));
+    color: var(--tab-ink, #17171a);
+  }
+  .tab:hover { background: var(--tab-hover-bg, rgba(255, 255, 255, 0.92)); color: var(--tab-ink, #17171a); }
+  .tab.active {
+    background: var(--tab-sel-bg, #1c1c1e);
+    border-color: transparent;
+    color: var(--tab-sel-ink, #ffffff);
+  }
+  .tab.drop {
+    background: var(--tab-hover-bg, rgba(255, 255, 255, 0.92));
+    border-color: var(--tab-line, rgba(0, 0, 0, 0.2));
+    color: var(--tab-ink, #17171a);
+  }
+  .tab.add { color: var(--tab-ink, #17171a); opacity: 0.62; border-style: dashed; }
+  .tab.locked {
+    background: var(--tab-bg, rgba(255, 255, 255, 0.78));
+    border-color: var(--tab-line, rgba(0, 0, 0, 0.12));
+    color: var(--tab-ink, #17171a);
+    opacity: 0.8;
+  }
+  .tab.locked.active { background: var(--tab-sel-bg, #1c1c1e); border-color: transparent; color: var(--tab-sel-ink, #ffffff); opacity: 1; }
+
+  .app .nm { color: var(--app-name, #1c1c1e); text-shadow: none; }
+  .app.missing .nm { opacity: 0.42; }
+  .app:hover { background: var(--field, rgba(0, 0, 0, 0.055)); }
+
+  #settingsBtn, #sortBtn, #toneBtn {
+    background: var(--tool-bg, rgba(255, 255, 255, 0.78));
+    border-color: var(--tool-line, rgba(0, 0, 0, 0.08));
+    color: var(--tool-ink-dim, rgba(0, 0, 0, 0.6));
+  }
+  #settingsBtn:hover,
+  #sortBtn:hover, #sortBtn.on,
+  #toneBtn:hover, #toneBtn.on { background: var(--tool-hover-bg, rgba(255, 255, 255, 0.95)); color: var(--tool-ink, #000); }
+
+  /* 浮层统一用白底深字：它们浮在面板之上，不跟着底色走 */
+  #sortMenu, #tonePanel {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 16px 42px rgba(0, 0, 0, 0.16);
+  }
+  #sortMenu .sTitle, #sortMenu .sHint { color: rgba(0, 0, 0, 0.42); }
+  #sortMenu button { color: #1c1c1e; }
+  #sortMenu button:hover { background: rgba(0, 0, 0, 0.06); }
+  #sortMenu .sHint { border-top-color: rgba(0, 0, 0, 0.08); }
+  #tonePanel .trow { color: rgba(0, 0, 0, 0.78); }
+  #tonePanel .trow .v { color: rgba(0, 0, 0, 0.45); }
+
+  input[type=range]::-webkit-slider-runnable-track { background: rgba(0, 0, 0, 0.12); }
+
+  /* 小色块：快捷面板里改底色 / 名字颜色 */
+  .tcolor {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 46px;
+    height: 24px;
+    padding: 0;
+    border: 1px solid rgba(0, 0, 0, 0.14);
+    border-radius: 6px;
+    background: transparent;
+    cursor: pointer;
+  }
+  .tcolor::-webkit-color-swatch-wrapper { padding: 3px; }
+  .tcolor::-webkit-color-swatch { border: none; border-radius: 4px; }
+
+  .ctxmenu {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.16);
+  }
+  .ctxmenu button { color: #1c1c1e; }
+  .ctxmenu button:hover { background: rgba(0, 0, 0, 0.06); }
+  .ctxmenu .divider { background: rgba(0, 0, 0, 0.08); }
+  .ctxmenu button.danger { color: #d93025; }
+  .ctxmenu button.danger:hover { background: rgba(217, 48, 37, 0.09); }
+
+  #dialog { background: rgba(0, 0, 0, 0.28); }
+  .dlg {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.1);
+    box-shadow: 0 20px 50px rgba(0, 0, 0, 0.22);
+  }
+  .dlg .dsub { color: rgba(0, 0, 0, 0.45); }
+  .dlg input {
+    background: rgba(0, 0, 0, 0.05);
+    border-color: rgba(0, 0, 0, 0.1);
+    color: #17171a;
+  }
+  .dlg button {
+    background: rgba(0, 0, 0, 0.06);
+    border-color: rgba(0, 0, 0, 0.08);
+    color: #17171a;
+  }
+  .dlg button:hover { background: rgba(0, 0, 0, 0.1); }
+  .dlg button.primary { background: #0a84ff; border-color: #0a84ff; color: #fff; }
+  .dlg button.primary:hover { background: #0070e0; }
+  .dlg .derr { color: #d93025; }
+
+  .group-input, .rename {
+    background: #fff;
+    border-color: rgba(0, 0, 0, 0.28);
+    color: #17171a;
+  }
+
+  #empty { color: var(--ink-faint, rgba(0, 0, 0, 0.42)); }
+  #gridWrap::-webkit-scrollbar-thumb { background: var(--line, rgba(0, 0, 0, 0.16)); }
+
+  /* ========== 开合动画：面板从 Dock 的「全部应用」按钮里弹出来 ==========
+     按钮在面板下方，本来落在窗口外、窗口也画不出界外内容，缩小时只能缩到面板自己的下边缘，
+     跟按钮之间永远隔着一条缝。开合期间主进程会把窗口朝右下临时扩出一块透明区域
+     （见 main.js 的 expandForAnchor），所以这里的缩放原点可以直接落在按钮上。 */
+  #veil {
+    position: fixed;
+    left: 0;
+    top: 0;
+    right: auto;
+    bottom: auto;
+    /* 扩出来的透明边不算面板：宽高按「窗口尺寸 - 透明边」钉住，
+       动画结束窗口缩回去时这两个值刚好等于窗口尺寸，面板不会跳 */
+    width: var(--panel-w, 100%);
+    height: var(--panel-h, 100%);
+    transform-origin: var(--ox, 50%) var(--oy, 100%);
+    will-change: transform, opacity;
+  }
+  /* 消息到达时窗口还没显示，先藏住；等窗口真的出现了再开播，否则会闪一帧完整面板 */
+  #veil.pre { opacity: 0; }
+  #veil.opening {
+    /* forwards：动画结束后保持住最终状态。千万别在结束时摘掉这个类——
+       一摘 backdrop-filter 要重算，面板底色会消失一百多毫秒再淡回来，看着就是「黑一下」 */
+    animation: panelIn 300ms cubic-bezier(0.2, 0.8, 0.3, 1) forwards;
+  }
+  #veil.closing {
+    animation: panelOut 210ms cubic-bezier(0.45, 0.05, 0.75, 0.4) forwards;
+  }
+  /* 分两段：前 22% 先把一块小小面板在按钮上亮出来（让人看清它是从按钮里出来的），
+     后面再展开到全尺寸。一条曲线做不到这个节奏，容易一帧就冲到大半。 */
+  @keyframes panelIn {
+    0%   { opacity: 0; transform: scale(0.12); }
+    22%  { opacity: 1; transform: scale(0.34); }
+    100% { opacity: 1; transform: none; }
+  }
+  @keyframes panelOut {
+    0%   { opacity: 1; transform: none; }
+    32%  { opacity: 1; transform: scale(0.34); }
+    100% { opacity: 0; transform: scale(0.12); }
+  }
+
+  /* ========== 拖拽：空白处按住就能挪面板 ========== */
+  #veil { -webkit-app-region: drag; }
+  #searchWrap, #tabs, #gridWrap, #sortBtn, #toneBtn, #settingsBtn,
+  #sortMenu, #tonePanel, #dialog, #pick, #trash, #batchBar, .ctxmenu { -webkit-app-region: no-drag; }
+  /* 顶部小把手，明确告诉用户这里可以拖 */
+  #dragBar {
+    position: absolute;
+    top: 9px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 56px;
+    height: 5px;
+    border-radius: 3px;
+    background: var(--ink-faint, rgba(0, 0, 0, 0.14));
+    opacity: 0.85;
+    z-index: 8;
+    transition: opacity 0.15s, background 0.15s;
+  }
+  #dragBar:hover { background: var(--ink-dim, rgba(0, 0, 0, 0.3)); opacity: 1; }
+</style>
+</head>
+<body>
+  <div id="ctxmenu" class="ctxmenu">
+    <button data-act="rename">重命名</button>
+    <button data-act="icon">更换图标…</button>
+    <button data-act="path">更改路径…</button>
+    <button data-act="dock">固定到 Dock</button>
+    <div class="divider"></div>
+    <button data-act="reset">恢复默认图标</button>
+    <div class="divider"></div>
+    <button data-act="batch">批量管理</button>
+    <button data-act="delete" class="danger">删除</button>
+  </div>
+
+  <!-- 拖动图标时出现的垃圾桶：丢进来 = 从列表移除 -->
+  <div id="trash">
+    <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.7"
+         stroke-linecap="round" stroke-linejoin="round">
+      <path d="M4 7h16M9.5 7V4.8c0-.5.4-.8.9-.8h3.2c.5 0 .9.3.9.8V7M6.5 7l1 12.2c.1.9.8 1.6 1.7 1.6h5.6c.9 0 1.6-.7 1.7-1.6L17.5 7"/>
+      <path d="M10 11v6M14 11v6"/>
+    </svg>
+    拖到这里删除
+  </div>
+
+  <!-- 批量管理操作条 -->
+  <div id="batchBar">
+    <span>已选 <b id="batchN">0</b> 个</span>
+    <button id="bAll">全选</button>
+    <button id="bNone">清空</button>
+    <button id="bDel" class="danger">删除</button>
+    <button id="bDone">完成</button>
+  </div>
+
+  <!-- 批量添加的勾选清单（扫描 / 导入文件夹时用） -->
+  <div id="pick">
+    <div class="dlg">
+      <h3 id="pickTitle">选择要添加的应用</h3>
+      <div class="dsub" id="pickSub"></div>
+      <div id="pickList"></div>
+      <div id="pickFoot">
+        <button id="pickAll">全选</button>
+        <button id="pickNone">清空</button>
+        <span class="gap"></span>
+        <button id="pickCancel">取消</button>
+        <button id="pickOk" class="primary">添加</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="groupMenu" class="ctxmenu"></div>
+
+  <div id="dialog">
+    <div class="dlg">
+      <h3 id="dlgTitle"></h3>
+      <div class="dsub" id="dlgSub"></div>
+      <input id="dlgInput" type="text" autocomplete="off" spellcheck="false">
+      <div class="derr" id="dlgErr"></div>
+      <div class="dbtns">
+        <button id="dlgCancel">取消</button>
+        <button id="dlgOk" class="primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="veil">
+    <div id="dragBar" title="按住拖动面板"></div>
+    <div id="settingsBtn" title="设置">&#9881;</div>
+    <div id="sortBtn" title="排序方式：手动">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h10M4 12h7M4 17h4"/>
+        <path d="M18 6v12M15 15l3 3 3-3"/>
+      </svg>
+    </div>
+    <div id="toneBtn" title="Dock 外观">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7">
+        <circle cx="12" cy="12" r="8.6"/>
+        <path d="M12 3.4a8.6 8.6 0 0 1 0 17.2z" fill="currentColor" stroke="none" opacity="0.75"/>
+      </svg>
+    </div>
+    <div id="tonePanel">
+      <div class="trow"><span>Dock 透明度</span><span class="v" id="toneAlphaVal">60%</span></div>
+      <input type="range" id="toneAlpha" min="0" max="100" step="1" value="60">
+      <div class="tsep"></div>
+      <div class="trow"><span>应用面板透明度</span><span class="v" id="tonePanelVal">92%</span></div>
+      <input type="range" id="tonePanelAlpha" min="0" max="100" step="1" value="92">
+      <div class="tsep"></div>
+      <div class="trow"><span>Dock 图标大小</span><span class="v" id="toneDockIconVal">50px</span></div>
+      <input type="range" id="toneDockIcon" min="36" max="64" step="1" value="50">
+      <div class="tsep"></div>
+      <div class="trow"><span>面板图标大小</span><span class="v" id="toneGridIconVal">54px</span></div>
+      <input type="range" id="toneGridIcon" min="36" max="96" step="1" value="54">
+      <div class="tsep"></div>
+      <div class="trow"><span>Dock 底色</span><input type="color" class="tcolor" id="toneDockColor" value="#1c1c1e" title="Dock 图标是白色的，底色太浅会看不清"></div>
+      <div class="trow"><span>Dock 按钮颜色</span><input type="color" class="tcolor" id="toneDockBtnColor" value="#ffffff"></div>
+      <div class="trow"><span>面板底色</span><input type="color" class="tcolor" id="tonePanelColor" value="#fafafc"></div>
+      <div class="trow"><span>名字颜色</span><input type="color" class="tcolor" id="toneNameColor" value="#1c1c1e"></div>
+    </div>
+    <div id="sortMenu">
+      <div class="sTitle">图标排序</div>
+      <button data-mode="manual">手动排序</button>
+      <button data-mode="recent">按最近使用</button>
+      <button data-mode="name">按名称</button>
+      <div class="sHint">自动排序下拖动图标会切回手动</div>
+    </div>
+    <div id="dropTip">松开即可导入 · 文件夹会建成同名分类</div>
+    <div id="topbar">
+      <div id="searchWrap">
+        <input id="search" type="text" placeholder="搜索应用…" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="tabs"></div>
+    </div>
+    <div id="gridWrap">
+      <div id="grid"></div>
+      <div id="empty">没有匹配的应用</div>
+    </div>
+  </div>
+
+<script>
+  const gridEl = document.getElementById('grid');
+  const searchEl = document.getElementById('search');
+  const emptyEl = document.getElementById('empty');
+  const veil = document.getElementById('veil');
+  const tabsEl = document.getElementById('tabs');
+
+  let allApps = [];
+  let currentGroup = '';
+  let lockedGroups = [];
+  let passwordGroups = [];
+  const unlockedGroups = new Set(); // 本次打开网格期间已验证过密码的分类
+  let dragEl = null;
+  let ctxTarget = null;
+  let dockPaths = [];
+  let sortMode = 'manual'; // manual 手动 / recent 最近使用 / name 名称
+
+  const menuEl = document.getElementById('ctxmenu');
+  const sortBtn = document.getElementById('sortBtn');
+  const sortMenu = document.getElementById('sortMenu');
+
+  const SORT_LABEL = { manual: '手动', recent: '最近使用', name: '名称' };
+  const SORT_MENU_LABEL = { manual: '手动排序', recent: '按最近使用', name: '按名称' };
+  // 中文按拼音排，数字按数值（"3" 在 "12" 前面）
+  const collator = new Intl.Collator('zh-Hans-CN', { numeric: true, sensitivity: 'base' });
+
+  // 排序只在展示层做，不动库里的 order，切回手动还能恢复原样
+  function applySort(list) {
+    if (sortMode === 'name') {
+      return list.slice().sort((a, b) => collator.compare(a.name, b.name));
+    }
+    if (sortMode === 'recent') {
+      return list.slice().sort(
+        (a, b) => (b.lastUsed || 0) - (a.lastUsed || 0) || collator.compare(a.name, b.name)
+      );
+    }
+    return list;
+  }
+
+  function syncSortUi() {
+    sortBtn.title = '排序方式：' + (SORT_LABEL[sortMode] || '手动');
+    sortMenu.querySelectorAll('button').forEach((b) => {
+      b.textContent =
+        (b.dataset.mode === sortMode ? '✓ ' : '\u2003') + (SORT_MENU_LABEL[b.dataset.mode] || '');
+    });
+  }
+
+  function setSortMode(mode, save) {
+    if (!SORT_LABEL[mode]) return;
+    sortMode = mode;
+    syncSortUi();
+    filter();
+    if (save !== false) window.dockpad.setSettings({ sortMode: mode });
+  }
+
+  function openSortMenu() {
+    // 两个浮层不同时挂，避免面板叠成一片
+    tonePanel.classList.remove('on');
+    toneBtn.classList.remove('on');
+    sortMenu.classList.add('on');
+    sortBtn.classList.add('on');
+  }
+
+  function closeSortMenu() {
+    sortMenu.classList.remove('on');
+    sortBtn.classList.remove('on');
+  }
+
+  sortBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (sortMenu.classList.contains('on')) closeSortMenu();
+    else openSortMenu();
+  });
+
+  sortMenu.addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    e.stopPropagation();
+    closeSortMenu();
+    setSortMode(b.dataset.mode);
+  });
+
+  sortMenu.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  document.getElementById('settingsBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    // 再点一次就是收起设置窗：做成开关，别让用户还要跑去点别处
+    window.dockpad.toggleSettings();
+  });
+
+  // ---- 通用输入对话框（重命名 / 设密码 / 解锁）----
+  const dlgEl = document.getElementById('dialog');
+  const dlgTitle = document.getElementById('dlgTitle');
+  const dlgSub = document.getElementById('dlgSub');
+  const dlgInput = document.getElementById('dlgInput');
+  const dlgErr = document.getElementById('dlgErr');
+  const dlgOk = document.getElementById('dlgOk');
+  const dlgCancel = document.getElementById('dlgCancel');
+  let dlgResolve = null;
+
+  let dlgMode = 'text';
+
+  function askText(opts) {
+    const o = opts || {};
+    // 上一次还挂着没结果的话先按取消收尾，避免 Promise 永远悬着导致后续操作失灵
+    if (dlgResolve) {
+      const prev = dlgResolve;
+      dlgResolve = null;
+      prev(null);
+    }
+    dlgMode = 'text';
+    dlgTitle.textContent = o.title || '';
+    dlgSub.textContent = o.sub || '';
+    dlgErr.textContent = '';
+    dlgInput.style.display = '';
+    dlgOk.classList.remove('danger');
+    dlgCancel.style.display = '';
+    dlgInput.type = o.password ? 'password' : 'text';
+    dlgInput.value = o.value || '';
+    dlgOk.textContent = o.okText || '确定';
+    dlgEl.classList.add('on');
+    setTimeout(() => {
+      dlgInput.focus();
+      dlgInput.select();
+    }, 30);
+    return new Promise((resolve) => {
+      dlgResolve = resolve;
+    });
+  }
+
+  // 页面内的确认框：不用 window.confirm()——那种原生弹窗会抢走焦点，
+  // 触发 closeOnBlur 把整个面板收掉（删除图标时面板闪退就是这个原因）。
+  function askConfirm(opts) {
+    const o = opts || {};
+    if (dlgResolve) {
+      const prev = dlgResolve;
+      dlgResolve = null;
+      prev(null);
+    }
+    dlgMode = 'confirm';
+    dlgTitle.textContent = o.title || '确认操作';
+    dlgSub.textContent = o.sub || '';
+    dlgErr.textContent = '';
+    dlgInput.style.display = 'none';
+    dlgOk.textContent = o.okText || '删除';
+    dlgOk.classList.add('danger');
+    dlgCancel.style.display = o.onlyOk ? 'none' : '';
+    dlgEl.classList.add('on');
+    return new Promise((resolve) => {
+      dlgResolve = resolve;
+    });
+  }
+
+  // 页面内提示，替代原生 alert()（原生弹窗会抢焦点把面板收掉）
+  function notice(msg, titleText) {
+    return askConfirm({ title: titleText || '提示', sub: String(msg || ''), okText: '知道了', onlyOk: true });
+  }
+
+  function closeDialog(val) {
+    dlgEl.classList.remove('on');
+    dlgInput.value = '';
+    dlgInput.style.display = '';
+    dlgOk.classList.remove('danger');
+    const r = dlgResolve;
+    dlgResolve = null;
+    if (!r) return;
+    r(dlgMode === 'confirm' ? val === true : val);
+    dlgMode = 'text';
+  }
+
+  dlgOk.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeDialog(dlgMode === 'confirm' ? true : dlgInput.value);
+  });
+  dlgCancel.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeDialog(null);
+  });
+  dlgEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.target === dlgEl) closeDialog(null);
+  });
+  dlgInput.addEventListener('click', (e) => e.stopPropagation());
+  dlgInput.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      closeDialog(dlgInput.value);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeDialog(null);
+    }
+  });
+
+  // ---- 分类右键菜单 ----
+  const groupMenuEl = document.getElementById('groupMenu');
+
+  function closeGroupMenu() {
+    groupMenuEl.classList.remove('on');
+  }
+
+  function openGroupMenu(x, y, group) {
+    const locked = lockedGroups.includes(group);
+    const hasPass = passwordGroups.includes(group);
+
+    const items = [
+      { label: locked ? '解锁' : '上锁', act: 'toggleLock' },
+      { label: hasPass ? '修改密码…' : '设置密码…', act: 'setPass' },
+    ];
+    items.push({ type: 'divider' });
+    items.push({ label: '重命名分类…', act: 'rename' });
+    items.push({ label: '删除分类', act: 'remove', danger: true });
+
+    groupMenuEl.innerHTML = '';
+    for (const it of items) {
+      if (it.type === 'divider') {
+        const d = document.createElement('div');
+        d.className = 'divider';
+        groupMenuEl.appendChild(d);
+        continue;
+      }
+      const b = document.createElement('button');
+      b.textContent = it.label;
+      if (it.danger) b.className = 'danger';
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        closeGroupMenu();
+        await runGroupAction(group, it.act);
+      });
+      groupMenuEl.appendChild(b);
+    }
+
+    groupMenuEl.classList.add('on');
+    const w = groupMenuEl.offsetWidth;
+    const h = groupMenuEl.offsetHeight;
+    groupMenuEl.style.left = Math.min(x, window.innerWidth - w - 8) + 'px';
+    groupMenuEl.style.top = Math.min(y, window.innerHeight - h - 8) + 'px';
+  }
+
+  // 涉及撤销保护的操作（解锁、删分类）必须先过密码这一关。
+  // 没设密码、或者本次打开网格已经验证过，就直接放行。
+  async function confirmGroupPassword(group) {
+    if (!passwordGroups.includes(group)) return true;
+    if (unlockedGroups.has(group)) return true;
+    const pass = await askText({
+      title: '需要密码',
+      sub: '「' + group + '」设置了密码，请先输入',
+      password: true,
+      okText: '确认',
+    });
+    if (pass === null) return false;
+    const ok = await window.dockpad.verifyGroupPassword(group, pass);
+    if (!ok) {
+      notice('密码不对');
+      return false;
+    }
+    return true;
+  }
+
+  async function runGroupAction(group, act) {
+    if (!group) return;
+
+    if (act === 'toggleLock') {
+      const nowLocked = !lockedGroups.includes(group);
+      // 解锁等于撤销保护，设了密码的得先输密码，不能右键一点就开
+      if (!nowLocked && !(await confirmGroupPassword(group))) return;
+      await window.dockpad.setGroupLocked(group, nowLocked);
+      unlockedGroups.delete(group); // 锁状态变了，之前的放行作废
+      return; // set-group-locked 会触发 apps-reset 重建 tab
+    }
+
+    if (act === 'setPass') {
+      const has = passwordGroups.includes(group);
+
+      // 已经有密码的，必须先输对原密码才能改
+      if (has) {
+        const old = await askText({
+          title: '验证原密码',
+          sub: '修改「' + group + '」的密码之前，先输入当前密码',
+          password: true,
+          okText: '下一步',
+        });
+        if (old === null) return;
+        const matched = await window.dockpad.verifyGroupPassword(group, old);
+        if (!matched) {
+          notice('原密码不对');
+          return;
+        }
+      }
+
+      const v = await askText({
+        title: has ? '设置新密码' : '设置密码',
+        sub: '「' + group + '」上锁后，要输入这个密码才能打开',
+        password: true,
+        okText: '保存',
+      });
+      if (v === null) return;
+      const pass = v.trim();
+      if (!pass) {
+        notice('密码不能是空的');
+        return;
+      }
+
+      await window.dockpad.setGroupPassword(group, pass);
+
+      // 以主进程为准重新取一次，别用可能过期的 lockedGroups
+      lockedGroups = await window.dockpad.getLockedGroups();
+      if (!lockedGroups.includes(group)) {
+        await window.dockpad.setGroupLocked(group, true);
+        lockedGroups = await window.dockpad.getLockedGroups();
+      }
+
+      unlockedGroups.delete(group);
+      passwordGroups = await window.dockpad.getPasswordGroups();
+      await buildTabs();
+      filter();
+      return;
+    }
+
+    if (act === 'rename') {
+      const v = await askText({
+        title: '重命名分类',
+        sub: '当前名称：' + group,
+        value: group,
+        okText: '改名',
+      });
+      if (v === null) return;
+      const name = v.trim();
+      if (!name || name === group) return;
+      const res = await window.dockpad.renameGroup(group, name);
+      if (!res || !res.ok) {
+        notice((res && res.error) || '改名失败');
+        return;
+      }
+      if (currentGroup === group) currentGroup = res.group;
+      return; // rename-group 会触发 apps-reset
+    }
+
+    if (act === 'remove') {
+      // 删掉分类等于把里面的应用全部暴露到「未分类」，同样要密码
+      if (!(await confirmGroupPassword(group))) return;
+      const n = allApps.filter((a) => a.group === group).length;
+      // 页面内确认：原生 confirm 会抢焦点触发 closeOnBlur，把整个面板收掉
+      const ok = await askConfirm({
+        title: '删除分类「' + group + '」？',
+        sub: n ? '里面的 ' + n + ' 个应用不会被删，会退到「未分类」。' : '这个分类里没有应用。',
+        okText: '删除',
+      });
+      if (!ok) return;
+      const res = await window.dockpad.removeGroup(group);
+      if (!res || !res.ok) {
+        notice((res && res.error) || '删除失败');
+        return;
+      }
+      if (currentGroup === group) currentGroup = '';
+      return;
+    }
+  }
+
+  // 锁着且设了密码的分类，进入前要验一次；没设密码的直接放行
+  async function ensureGroupAccess(group) {
+    if (!group) return true;
+    if (!lockedGroups.includes(group)) return true;
+    if (!passwordGroups.includes(group)) return true;
+    if (unlockedGroups.has(group)) return true;
+
+    const pass = await askText({
+      title: '解锁「' + group + '」',
+      sub: '这个分类设置了密码',
+      password: true,
+      okText: '解锁',
+    });
+    if (pass === null) return false;
+
+    const ok = await window.dockpad.verifyGroupPassword(group, pass);
+    if (!ok) {
+      notice('密码不对');
+      return false;
+    }
+    unlockedGroups.add(group);
+    return true;
+  }
+
+  // ---- 外观快捷面板（Dock 透明度 / 模糊）----
+  const toneBtn = document.getElementById('toneBtn');
+  const tonePanel = document.getElementById('tonePanel');
+  const toneAlpha = document.getElementById('toneAlpha');
+  const toneAlphaVal = document.getElementById('toneAlphaVal');
+  const tonePanelAlpha = document.getElementById('tonePanelAlpha');
+  const tonePanelVal = document.getElementById('tonePanelVal');
+  const toneDockIcon = document.getElementById('toneDockIcon');
+  const toneDockIconVal = document.getElementById('toneDockIconVal');
+  const toneGridIcon = document.getElementById('toneGridIcon');
+  const toneGridIconVal = document.getElementById('toneGridIconVal');
+  const tonePanelColor = document.getElementById('tonePanelColor');
+  const toneNameColor = document.getElementById('toneNameColor');
+  const toneDockColor = document.getElementById('toneDockColor');
+  const toneDockBtnColor = document.getElementById('toneDockBtnColor');
+
+  function fillTone(s) {
+    if (!s) return;
+    const pct = Math.round(s.dockOpacity * 100);
+    toneAlpha.value = pct;
+    toneAlphaVal.textContent = pct + '%';
+    const pp = Math.round(s.panelOpacity * 100);
+    tonePanelAlpha.value = pp;
+    tonePanelVal.textContent = pp + '%';
+    toneDockIcon.value = s.iconSize;
+    toneDockIconVal.textContent = s.iconSize + 'px';
+    toneGridIcon.value = s.gridIconSize;
+    toneGridIconVal.textContent = s.gridIconSize + 'px';
+    if (s.panelColor) tonePanelColor.value = s.panelColor;
+    if (s.appNameColor) toneNameColor.value = s.appNameColor;
+    if (s.dockColor) toneDockColor.value = s.dockColor;
+    if (s.dockBtnColor) toneDockBtnColor.value = s.dockBtnColor;
+  }
+
+  function toggleTone(force) {
+    const on = force === undefined ? !tonePanel.classList.contains('on') : !!force;
+    tonePanel.classList.toggle('on', on);
+    toneBtn.classList.toggle('on', on);
+    if (on) {
+      closeSortMenu();
+      window.dockpad.getSettings().then(fillTone);
+    }
+  }
+
+  toneBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    toggleTone();
+  });
+
+  tonePanel.addEventListener('click', (e) => e.stopPropagation());
+
+  // 滑块的 input 很密集，攒到下一帧再发
+  let toneRaf = 0;
+  let tonePatch = null;
+  function pushTone(patch) {
+    tonePatch = Object.assign(tonePatch || {}, patch);
+    if (toneRaf) return;
+    toneRaf = requestAnimationFrame(() => {
+      toneRaf = 0;
+      const p = tonePatch;
+      tonePatch = null;
+      if (p) window.dockpad.setSettings(p);
+    });
+  }
+
+  toneAlpha.addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    toneAlphaVal.textContent = v + '%';
+    pushTone({ dockOpacity: v / 100 });
+  });
+
+  tonePanelAlpha.addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    tonePanelVal.textContent = v + '%';
+    pushTone({ panelOpacity: v / 100 });
+  });
+
+  toneDockIcon.addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    toneDockIconVal.textContent = v + 'px';
+    pushTone({ iconSize: v });
+  });
+
+  toneGridIcon.addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    toneGridIconVal.textContent = v + 'px';
+    pushTone({ gridIconSize: v });
+  });
+
+  // 颜色改动立刻套用到面板，不用等下一帧攒批
+  tonePanelColor.addEventListener('input', (e) => {
+    document.documentElement.style.setProperty('--panel-rgb', (hexToRgb(e.target.value) || [250, 250, 252]).join(', '));
+    pushTone({ panelColor: e.target.value });
+  });
+
+  toneNameColor.addEventListener('input', (e) => {
+    document.documentElement.style.setProperty('--app-name', e.target.value);
+    pushTone({ appNameColor: e.target.value });
+  });
+
+  // Dock 底色：只改设置里的值，主进程广播后 dock.html 自己套用
+  toneDockColor.addEventListener('input', (e) => {
+    pushTone({ dockColor: e.target.value });
+  });
+
+  toneDockBtnColor.addEventListener('input', (e) => {
+    pushTone({ dockBtnColor: e.target.value });
+  });
+
+  // 面板自身的透明度、图标大小（搜索框和分类按钮固定 75% 白底，不跟随）
+  // #rrggbb → [r,g,b]；解析失败返回 null
+  function hexToRgb(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || '').trim());
+    if (!m) return null;
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+  }
+
+  function applyPanelAlpha(s) {
+    if (!s) return;
+    const root = document.documentElement.style;
+    // 注意：不能用 `Number(x) || 1`——0 是合法值（全透明），|| 会把它变成 1
+    const a = Number(s.panelOpacity);
+    root.setProperty('--panel-alpha', String(Number.isFinite(a) ? a : 1));
+    root.setProperty('--grid-icon', (s.gridIconSize || 54) + 'px');
+
+    // 底色：转成 rgb 三元组，透明度仍然由 --panel-alpha 单独控制
+    const rgb = hexToRgb(s.panelColor) || [250, 250, 252];
+    root.setProperty('--panel-rgb', rgb.join(', '));
+
+    // 名字颜色：用户指定；没给就按底色亮度自动取黑白
+    const lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+    const lightBg = lum > 0.5;
+    root.setProperty('--app-name', s.appNameColor || (lightBg ? '#1c1c1e' : '#ffffff'));
+
+    // 分类标签：底色取面板底色，文字取名字颜色；两者太接近时自动用对比色，
+    // 免得「白底白字」看不见（面板透明度拉到 0 时尤其明显）
+    const nameHex = s.appNameColor || (lightBg ? '#1c1c1e' : '#ffffff');
+    const nameRgb = hexToRgb(nameHex) || (lightBg ? [28, 28, 30] : [255, 255, 255]);
+    const nameLum = (0.2126 * nameRgb[0] + 0.7152 * nameRgb[1] + 0.0722 * nameRgb[2]) / 255;
+    const tooClose = Math.abs(nameLum - lum) < 0.3;
+    // 未选中：面板色做底、字色做字
+    root.setProperty('--tab-bg', 'rgba(' + rgb.join(', ') + ', 0.78)');
+    root.setProperty('--tab-hover-bg', 'rgba(' + rgb.join(', ') + ', 0.95)');
+    root.setProperty('--tab-ink', tooClose ? (lum > 0.5 ? '#17171a' : '#ffffff') : 'rgb(' + nameRgb.join(', ') + ')');
+    root.setProperty('--tab-line', 'rgba(' + nameRgb.join(', ') + ', 0.22)');
+    // 选中：反色——字色做底、底色做字；太接近时强制黑白
+    const selBg = tooClose ? (lum > 0.5 ? [28, 28, 30] : [255, 255, 255]) : nameRgb;
+    const selInk = tooClose ? (lum > 0.5 ? [255, 255, 255] : [23, 23, 26]) : rgb;
+    root.setProperty('--tab-sel-bg', 'rgba(' + selBg.join(', ') + ', 0.96)');
+    root.setProperty('--tab-sel-ink', 'rgb(' + selInk.join(', ') + ')');
+
+    // 右上角三个快捷按钮（设置/排序/外观）：和分类标签同一套配色——
+    // 底色取面板底色、图标取名字颜色，太接近时自动换对比色，免得白底图标看不见
+    const toolInk = tooClose ? (lum > 0.5 ? [23, 23, 26] : [255, 255, 255]) : nameRgb;
+    root.setProperty('--tool-bg', 'rgba(' + rgb.join(', ') + ', 0.78)');
+    root.setProperty('--tool-hover-bg', 'rgba(' + rgb.join(', ') + ', 0.95)');
+    root.setProperty('--tool-ink', 'rgb(' + toolInk.join(', ') + ')');
+    root.setProperty('--tool-ink-dim', 'rgba(' + toolInk.join(', ') + ', 0.72)');
+    root.setProperty('--tool-ink-faint', 'rgba(' + toolInk.join(', ') + ', 0.42)');
+    root.setProperty('--tool-line', 'rgba(' + toolInk.join(', ') + ', 0.2)');
+
+    // 搜索框、分类、按钮这些控件跟着底色明暗走，不然深底上会变成白字白底
+    if (lightBg) {
+      root.setProperty('--ink', '#17171a');
+      root.setProperty('--ink-dim', 'rgba(0, 0, 0, 0.72)');
+      root.setProperty('--ink-faint', 'rgba(0, 0, 0, 0.42)');
+      root.setProperty('--field', 'rgba(0, 0, 0, 0.055)');
+      root.setProperty('--field-hover', 'rgba(0, 0, 0, 0.11)');
+      root.setProperty('--field-focus', 'rgba(0, 0, 0, 0.04)');
+      root.setProperty('--line', 'rgba(0, 0, 0, 0.07)');
+      root.setProperty('--sel-bg', '#1c1c1e');
+      root.setProperty('--sel-ink', '#ffffff');
+      root.setProperty('--edge', 'rgba(255, 255, 255, 0.9)');
+      root.setProperty('--edge-top', 'rgba(255, 255, 255, 1)');
+    } else {
+      root.setProperty('--ink', '#ffffff');
+      root.setProperty('--ink-dim', 'rgba(255, 255, 255, 0.78)');
+      root.setProperty('--ink-faint', 'rgba(255, 255, 255, 0.45)');
+      root.setProperty('--field', 'rgba(255, 255, 255, 0.10)');
+      root.setProperty('--field-hover', 'rgba(255, 255, 255, 0.18)');
+      root.setProperty('--field-focus', 'rgba(255, 255, 255, 0.14)');
+      root.setProperty('--line', 'rgba(255, 255, 255, 0.14)');
+      root.setProperty('--sel-bg', '#ffffff');
+      root.setProperty('--sel-ink', '#17171a');
+      root.setProperty('--edge', 'rgba(255, 255, 255, 0.28)');
+      root.setProperty('--edge-top', 'rgba(255, 255, 255, 0.42)');
+    }
+  }
+
+  window.dockpad.getSettings().then((s) => {
+    applyPanelAlpha(s);
+    fillTone(s);
+  });
+
+  // ---- 开关动画 ----
+  // 缩放原点取按钮在窗口内的坐标。主进程在动画期间把窗口朝右下扩过，
+  // 所以按钮这会儿是落在窗口里的（扩出来的那块是透明的，不算面板）。
+  let lastAnchor = null
+
+  // 窗口被临时扩过：面板实际尺寸 = 窗口尺寸 - 透明边。
+  // 宽高直接用主进程给的数值钉住（不读 innerHeight：窗口 resize 事件可能晚一两帧才到，
+  // 那时候动画已经开始播了，会露出被裁掉的开头）。
+  function applyPanelBox(info) {
+    const v = document.getElementById('veil')
+    const padR = info && Number.isFinite(info.padR) ? info.padR : 0
+    const padB = info && Number.isFinite(info.padB) ? info.padB : 0
+    const w = info && Number.isFinite(info.w) ? info.w : window.innerWidth - padR
+    const h = info && Number.isFinite(info.h) ? info.h : window.innerHeight - padB
+    v.style.setProperty('--panel-w', Math.max(1, w) + 'px')
+    v.style.setProperty('--panel-h', Math.max(1, h) + 'px')
+  }
+
+  // 等窗口真正变成扩展后的尺寸再开播，否则开头几帧面板会被窗口下边界裁掉
+  function whenSized(info, cb) {
+    const padB = info && Number.isFinite(info.padB) ? info.padB : 0
+    const padR = info && Number.isFinite(info.padR) ? info.padR : 0
+    const wantH = info && Number.isFinite(info.h) ? info.h + padB : null
+    const wantW = info && Number.isFinite(info.w) ? info.w + padR : null
+    let tries = 6
+    const step = () => {
+      const okH = wantH === null || Math.abs(window.innerHeight - wantH) <= 1
+      const okW = wantW === null || Math.abs(window.innerWidth - wantW) <= 1
+      if ((okH && okW) || tries-- <= 0) {
+        cb()
+        return
+      }
+      requestAnimationFrame(step)
+    }
+    step()
+  }
+
+  function setPanelOrigin(anchor) {
+    const v = document.getElementById('veil')
+    const W = parseFloat(v.style.getPropertyValue('--panel-w')) || window.innerWidth || 1
+    const H = parseFloat(v.style.getPropertyValue('--panel-h')) || window.innerHeight || 1
+    let ox = W / 2
+    let oy = H
+    if (anchor && Number.isFinite(anchor.x) && Number.isFinite(anchor.y)) {
+      ox = anchor.x - window.screenX
+      oy = anchor.y - window.screenY
+    }
+    v.style.setProperty('--ox', ox + 'px')
+    v.style.setProperty('--oy', oy + 'px')
+  }
+
+  let openAnimId = 0
+
+  function playPanelOpen(info) {
+    if (info) lastAnchor = info
+    const v = document.getElementById('veil')
+
+    // 先把上一次留下的动画类摘掉、再藏起来。这一步必须在窗口还隐藏时做：
+    // 等显示出来再改，会有一帧露出完整面板。
+    v.classList.remove('closing', 'opening')
+    v.classList.add('pre')
+
+    const run = () => {
+      const id = ++openAnimId
+      v.classList.remove('pre')
+      void v.offsetWidth // 强制回流，保证连续开关也能重新播
+      v.classList.add('opening')
+      let fired = false
+      const done = () => {
+        if (fired || id !== openAnimId) return
+        fired = true
+        // 注意：这里**不摘** .opening。它带 forwards，保持住终态即可；
+        // 摘掉会触发 backdrop-filter 重算，面板底色闪掉一下。
+        window.dockpad.gridOpened()
+      }
+      v.addEventListener('animationend', done, { once: true })
+      setTimeout(done, 1200)
+    }
+
+    // 尺寸和原点必须按「扩展后」的窗口算，消息到达时就直接算好
+    applyPanelBox(info)
+    setPanelOrigin(info || lastAnchor)
+
+    // 主进程先发消息再 show()，这时候窗口还是隐藏的。动画在隐藏状态下会先跑掉一截，
+    // 等真正显示出来只剩后半段。所以等窗口可见、尺寸也扩到位之后再开始。
+    if (document.visibilityState === 'visible') {
+      whenSized(info, run)
+      return
+    }
+    let started = false
+    const kick = () => {
+      if (started) return
+      started = true
+      document.removeEventListener('visibilitychange', onVis)
+      whenSized(info, run)
+    }
+    const onVis = () => {
+      if (document.visibilityState === 'visible') kick()
+    }
+    document.addEventListener('visibilitychange', onVis)
+    setTimeout(kick, 200) // 兜底：万一没收到 visibilitychange，也别让面板不播动画
+  }
+
+  function playPanelClose(info) {
+    if (info) lastAnchor = info
+    const v = document.getElementById('veil')
+    // 收起时窗口同样被临时扩过；面板可能被拖过位置，按当前窗口坐标重算一次
+    applyPanelBox(info)
+    setPanelOrigin(info || lastAnchor)
+    openAnimId++ // 让还在等 animationend 的打开动画失效
+    // 不摘 .opening：.closing 在样式表里排在它后面，会直接顶掉；
+    // 中途摘类会让背景模糊重算，收起那一下也会闪。
+    v.classList.remove('pre')
+    let done = false
+    const finish = () => {
+      if (done) return;
+      done = true;
+      // 故意保留 .closing：它带 forwards，最后一帧是「缩到按钮上、完全透明」，
+      // 摘掉的话面板会先弹回全尺寸再被隐藏，看起来就是闪一下。
+      // 下一次打开时 playPanelOpen 会把它清掉。
+      window.dockpad.gridClosed();
+    };
+
+    whenSized(info, () => {
+      v.classList.remove('closing')
+      void v.offsetWidth
+      v.classList.add('closing')
+      v.addEventListener('animationend', finish, { once: true });
+      setTimeout(finish, 420); // 动画被系统降级时的兜底
+    })
+  }
+
+  window.dockpad.onGridOpen(playPanelOpen);
+  window.dockpad.onGridClose(playPanelClose);
+
+  // 托盘菜单或设置窗改了透明度，这里开着面板就同步过来（正在拖滑块就别打断）
+  window.dockpad.onSettingsChanged((s) => {
+    applyPanelAlpha(s);
+    if (s && s.sortMode && s.sortMode !== sortMode) {
+      sortMode = s.sortMode;
+      syncSortUi();
+      filter();
+    }
+    if (!tonePanel.classList.contains('on')) return;
+    const ae = document.activeElement;
+    if (ae && ae.tagName === 'INPUT' && ae.type === 'range') return;
+    fillTone(s);
+  });
+
+  // 每次重新唤出网格都把面板收起来，别让它一直挂着
+  window.addEventListener('focus', () => toggleTone(false));
+
+  function openMenu(x, y, el, app) {
+    ctxTarget = { el, app };
+    const dockBtn = menuEl.querySelector('[data-act="dock"], [data-act="undock"]');
+    if (dockBtn) {
+      if (dockPaths.includes(app.path)) {
+        dockBtn.dataset.act = 'undock';
+        dockBtn.textContent = '从 Dock 移除';
+      } else {
+        dockBtn.dataset.act = 'dock';
+        dockBtn.textContent = '固定到 Dock';
+      }
+    }
+    menuEl.classList.add('on');
+    const w = menuEl.offsetWidth;
+    const h = menuEl.offsetHeight;
+    const left = Math.min(x, window.innerWidth - w - 8);
+    const top = Math.min(y, window.innerHeight - h - 8);
+    menuEl.style.left = left + 'px';
+    menuEl.style.top = top + 'px';
+  }
+
+  function closeMenu() {
+    menuEl.classList.remove('on');
+    ctxTarget = null;
+  }
+
+  function persistOrder() {
+    const paths = Array.from(gridEl.querySelectorAll('.app')).map((n) => n.dataset.path);
+    if (!paths.length) return;
+    window.dockpad.saveOrder(paths);
+    // 本地也按拖后的顺序排一下，否则切回手动时会跳回旧顺序
+    const pos = new Map(paths.map((p, i) => [p, i]));
+    allApps.sort((a, b) => {
+      const ia = pos.has(a.path) ? pos.get(a.path) : Infinity;
+      const ib = pos.has(b.path) ? pos.get(b.path) : Infinity;
+      return ia - ib;
+    });
+    // 自动排序下还能拖动 → 说明用户想自己排，切回手动，不然拖完就弹回原位
+    if (sortMode !== 'manual') setSortMode('manual');
+  }
+
+  menuEl.addEventListener('click', async (e) => {
+    const btn = e.target.closest('button');
+    if (!btn || !ctxTarget) return;
+    e.stopPropagation();
+    const act = btn.dataset.act;
+    const { el, app } = ctxTarget;
+    closeMenu();
+
+    if (act === 'rename') {
+      startRename(el, app);
+    } else if (act === 'icon') {
+      await window.dockpad.pickIcon(app.path);
+    } else if (act === 'reset') {
+      await window.dockpad.resetIcon(app.path);
+    } else if (act === 'dock') {
+      await window.dockpad.addToDock(app.path);
+      dockPaths = await window.dockpad.getDockPaths();
+    } else if (act === 'undock') {
+      await window.dockpad.removeFromDock(app.path);
+      dockPaths = await window.dockpad.getDockPaths();
+    } else if (act === 'path') {
+      const v = await askText({
+        title: '更改路径',
+        sub: '「' + app.name + '」现在指向的位置',
+        value: app.path,
+        okText: '保存',
+      });
+      if (v === null) return;
+      const p = v.trim();
+      if (!p || p === app.path) return;
+      const res = await window.dockpad.setAppPath(app.path, p);
+      if (!res || !res.ok) {
+        notice((res && res.error) || '修改失败');
+        return;
+      }
+    } else if (act === 'delete') {
+      // 用页面内的确认框：window.confirm() 是原生弹窗，会抢焦点触发 closeOnBlur 把面板收掉
+      const ok = await askConfirm({
+        title: '删除「' + app.name + '」？',
+        sub: '只从 DockPad 列表里移除，不会动磁盘上的文件。',
+        okText: '删除',
+      });
+      if (!ok) return;
+      await removeAppByPath(app.path);
+    } else if (act === 'batch') {
+      enterBatch();
+    }
+  });
+
+  menuEl.addEventListener('contextmenu', (e) => e.preventDefault());
+
+  // 从列表里移除一个应用：固定在 Dock 上的要一起撤掉，不然 Dock 会留一个孤儿图标。
+  // 全程只走页面内操作，面板不会失焦关闭。
+  async function removeAppByPath(p) {
+    if (dockPaths.includes(p)) {
+      await window.dockpad.removeFromDock(p);
+    }
+    const res = await window.dockpad.removeApp(p);
+    dockPaths = await window.dockpad.getDockPaths();
+    return res;
+  }
+
+  // ---- 批量管理 ----
+  let batchMode = false;
+  const batchSel = new Set();
+  const batchBarEl = document.getElementById('batchBar');
+
+  function enterBatch() {
+    batchMode = true;
+    batchSel.clear();
+    closeMenu();
+    document.body.classList.add('batch');
+    updateBatchBar();
+  }
+
+  function exitBatch() {
+    batchMode = false;
+    batchSel.clear();
+    document.body.classList.remove('batch');
+    gridEl.querySelectorAll('.app.sel').forEach((el) => el.classList.remove('sel'));
+    updateBatchBar();
+  }
+
+  function updateBatchBar() {
+    document.getElementById('batchN').textContent = String(batchSel.size);
+    document.getElementById('bDel').disabled = batchSel.size === 0;
+  }
+
+  document.getElementById('bAll').addEventListener('click', (e) => {
+    e.stopPropagation();
+    gridEl.querySelectorAll('.app').forEach((el) => {
+      el.classList.add('sel');
+      if (el.dataset.path) batchSel.add(el.dataset.path);
+    });
+    updateBatchBar();
+  });
+  document.getElementById('bNone').addEventListener('click', (e) => {
+    e.stopPropagation();
+    batchSel.clear();
+    gridEl.querySelectorAll('.app.sel').forEach((el) => el.classList.remove('sel'));
+    updateBatchBar();
+  });
+  document.getElementById('bDone').addEventListener('click', (e) => {
+    e.stopPropagation();
+    exitBatch();
+  });
+  document.getElementById('bDel').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const list = [...batchSel];
+    if (!list.length) return;
+    const ok = await askConfirm({
+      title: '删除选中的 ' + list.length + ' 个应用？',
+      sub: '只从 DockPad 列表里移除，不会动磁盘上的文件。',
+      okText: '删除',
+    });
+    if (!ok) return;
+    for (const p of list) await removeAppByPath(p);
+    batchSel.clear();
+    updateBatchBar();
+    // apps-reset 会重建网格，批量模式保持开着，方便继续挑继续删
+  });
+
+  // ---- 拖拽到垃圾桶删除 ----
+  const trashEl = document.getElementById('trash');
+  trashEl.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    trashEl.classList.add('hot');
+  });
+  trashEl.addEventListener('dragleave', () => trashEl.classList.remove('hot'));
+  trashEl.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    trashEl.classList.remove('hot');
+    document.body.classList.remove('dragging-app');
+    const p = e.dataTransfer.getData('text/plain');
+    if (!p) return;
+    dragEl = null;
+    const el = gridEl.querySelector('.app[data-path="' + CSS.escape(p) + '"]');
+    if (el) el.remove(); // 先把图标从网格里拿掉，等 apps-reset 重建
+    await removeAppByPath(p);
+  });
+
+  // ---- 批量添加的勾选清单（扫描 / 导入文件夹时由主进程调起） ----
+  let pickResolve = null;
+  const pickEl = document.getElementById('pick');
+
+  function pickUpdateCount() {
+    const n = pickEl.querySelectorAll('#pickList input:checked').length;
+    document.getElementById('pickOk').textContent = n ? '添加 ' + n + ' 个' : '添加';
+  }
+
+  // candidates: [{path, name, group}]；返回勾选的 {path,name,group} 数组，取消返回 null
+  function pickApps(candidates) {
+    const list = Array.isArray(candidates) ? candidates : [];
+    if (pickResolve) {
+      const prev = pickResolve;
+      pickResolve = null;
+      prev([]);
+    }
+    const wrap = document.getElementById('pickList');
+    wrap.innerHTML = '';
+    for (const c of list) {
+      const row = document.createElement('label');
+      row.className = 'prow';
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.checked = true;
+      cb.value = c.path;
+      cb.addEventListener('click', (e) => {
+        e.stopPropagation();
+        pickUpdateCount();
+      });
+      const sp = document.createElement('span');
+      sp.className = 'pname';
+      sp.textContent = c.name || c.path;
+      const gp = document.createElement('span');
+      gp.className = 'pgroup';
+      if (c.group && c.group !== '__root__') gp.textContent = '→ ' + c.group;
+      row.appendChild(cb);
+      row.appendChild(sp);
+      row.appendChild(gp);
+      wrap.appendChild(row);
+    }
+    document.getElementById('pickSub').textContent = list.length
+      ? '共 ' + list.length + ' 个，勾选要加入的（默认全选）'
+      : '';
+    pickEl.classList.add('on');
+    pickUpdateCount();
+    return new Promise((resolve) => {
+      pickResolve = resolve;
+    });
+  }
+
+  function closePick(val) {
+    let chosen = null;
+    if (val === true) {
+      chosen = [...pickEl.querySelectorAll('#pickList input:checked')].map((cb) => {
+        const row = cb.closest('.prow');
+        const nameEl = row ? row.querySelector('.pname') : null;
+        const grpEl = row ? row.querySelector('.pgroup') : null;
+        return {
+          path: cb.value,
+          name: nameEl ? nameEl.textContent : '',
+          group: grpEl ? grpEl.textContent.replace('→ ', '') : '',
+        };
+      });
+    }
+    pickEl.classList.remove('on');
+    const r = pickResolve;
+    pickResolve = null;
+    if (r) r(chosen);
+  }
+
+  document.getElementById('pickOk').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closePick(true);
+  });
+  document.getElementById('pickCancel').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closePick(null);
+  });
+  document.getElementById('pickAll').addEventListener('click', (e) => {
+    e.stopPropagation();
+    pickEl.querySelectorAll('#pickList input').forEach((cb) => { cb.checked = true; });
+    pickUpdateCount();
+  });
+  document.getElementById('pickNone').addEventListener('click', (e) => {
+    e.stopPropagation();
+    pickEl.querySelectorAll('#pickList input').forEach((cb) => { cb.checked = false; });
+    pickUpdateCount();
+  });
+  pickEl.addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (e.target === pickEl) closePick(null);
+  });
+  window.pickApps = pickApps; // 主进程 executeJavaScript 的调用入口
+
+  function makeApp(app) {
+    const el = document.createElement('div');
+    el.className = app.missing ? 'app missing' : 'app';
+    el.title = app.missing ? app.name + '（快捷方式已失效）' : app.name;
+
+    const ic = document.createElement('div');
+    ic.className = 'ic';
+    if (app.icon) {
+      const img = document.createElement('img');
+      img.src = app.icon;
+      img.alt = '';
+      ic.appendChild(img);
+    } else {
+      const fb = document.createElement('div');
+      fb.className = 'fb';
+      fb.textContent = app.name.slice(0, 1);
+      ic.appendChild(fb);
+    }
+
+    const nm = document.createElement('div');
+    nm.className = 'nm';
+    nm.textContent = app.name;
+
+    el.appendChild(ic);
+    el.appendChild(nm);
+    el.dataset.path = app.path;
+    el.draggable = true;
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (batchMode) {
+        // 批量模式：点击=勾选/取消，不启动应用
+        el.classList.toggle('sel');
+        if (el.classList.contains('sel')) batchSel.add(app.path);
+        else batchSel.delete(app.path);
+        updateBatchBar();
+        return;
+      }
+      window.dockpad.launch(app.path);
+    });
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openMenu(e.clientX, e.clientY, el, app);
+    });
+    el.addEventListener('dragstart', (e) => {
+      dragEl = el;
+      el.classList.add('dragging');
+      document.body.classList.add('dragging-app'); // 让垃圾桶现身
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', app.path); } catch (err) { /* ignore */ }
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      document.body.classList.remove('dragging-app');
+      trashEl.classList.remove('hot');
+      dragEl = null;
+      persistOrder();
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (!dragEl || dragEl === el) return;
+      const rect = el.getBoundingClientRect();
+      const after = e.clientX - rect.left > rect.width / 2;
+      const parent = el.parentNode;
+      if (after) parent.insertBefore(dragEl, el.nextSibling);
+      else parent.insertBefore(dragEl, el);
+    });
+    return el;
+  }
+
+  function paint(list) {
+    gridEl.innerHTML = '';
+    list.forEach((a) => gridEl.appendChild(makeApp(a)));
+    emptyEl.style.display = list.length ? 'none' : 'block';
+  }
+
+  function filter() {
+    const q = searchEl.value.trim().toLowerCase();
+    let list = allApps;
+    if (currentGroup) {
+      list = list.filter((a) => a.group === currentGroup);
+    } else {
+      list = list.filter((a) => !lockedGroups.includes(a.group));
+    }
+    if (q) list = list.filter((a) => a.name.toLowerCase().includes(q));
+    paint(applySort(list));
+  }
+
+  const LOCK_SVG =
+    '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" ' +
+    'stroke-width="2.4" stroke-linecap="round"><rect x="4" y="11" width="16" height="10" rx="2.5"/>' +
+    '<path d="M8 11V7.5a4 4 0 0 1 8 0V11"/></svg>';
+
+  // 拖放和刷新会同时触发多次重建。以前是开头就清空再 await，两次并发的话
+  // 后回来的那次会把分类再追加一遍，看起来就是「所有分类复制了一份」。
+  // 现在用序号：只有最后一次的结果落地，清空也挪到 await 之后。
+  let tabsSeq = 0;
+
+  async function buildTabs() {
+    const seq = ++tabsSeq;
+    const groups = await window.dockpad.getGroups();
+    const locked = await window.dockpad.getLockedGroups();
+    const pw = await window.dockpad.getPasswordGroups();
+    if (seq !== tabsSeq) return; // 有更新的一次在跑，这次结果作废
+    lockedGroups = locked;
+    passwordGroups = pw;
+    tabsEl.innerHTML = '';
+
+    const make = (label, value, locked) => {
+      const b = document.createElement('button');
+      b.className = 'tab' + (currentGroup === value ? ' active' : '') + (locked ? ' locked' : '');
+      b.innerHTML = (locked ? LOCK_SVG : '') + label;
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        if (!(await ensureGroupAccess(value))) return;
+        currentGroup = value;
+        tabsEl.querySelectorAll('.tab').forEach((t) => t.classList.remove('active'));
+        b.classList.add('active');
+        filter();
+      });
+      if (value) {
+        b.addEventListener('contextmenu', (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          closeMenu();
+          openGroupMenu(e.clientX, e.clientY, value);
+        });
+        b.addEventListener('dragover', (e) => {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          b.classList.add('drop');
+        });
+        b.addEventListener('dragleave', () => b.classList.remove('drop'));
+        b.addEventListener('drop', async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          b.classList.remove('drop');
+          const src = e.dataTransfer.getData('text/plain');
+          if (!src) return;
+          const res = await window.dockpad.moveToGroup(src, value);
+          if (!res || !res.ok) notice((res && res.error) || '移动失败');
+        });
+      }
+      return b;
+    };
+
+    const visibleCount = allApps.filter((a) => !lockedGroups.includes(a.group)).length;
+    tabsEl.appendChild(make('全部 ' + visibleCount, '', false));
+    groups.forEach((g) => {
+      const n = allApps.filter((a) => a.group === g).length;
+      tabsEl.appendChild(make(g + ' ' + n, g, lockedGroups.includes(g)));
+    });
+
+    const addBtn = document.createElement('button');
+    addBtn.className = 'tab add';
+    addBtn.textContent = '+ 新建分类';
+    addBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      showGroupInput();
+    });
+    tabsEl.appendChild(addBtn);
+  }
+
+  function showGroupInput() {
+    if (tabsEl.querySelector('input.group-input')) return;
+    const input = document.createElement('input');
+    input.className = 'group-input';
+    input.placeholder = '分类名，回车创建';
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('keydown', async (e) => {
+      e.stopPropagation();
+      if (e.key === 'Escape') {
+        input.remove();
+        return;
+      }
+      if (e.key !== 'Enter') return;
+      const name = input.value.trim();
+      if (!name) {
+        input.remove();
+        return;
+      }
+      const res = await window.dockpad.createGroup(name);
+      input.remove();
+      if (!res || !res.ok) notice((res && res.error) || '创建失败');
+    });
+    tabsEl.appendChild(input);
+    input.focus();
+  }
+
+  function startRename(el, app) {
+    if (el.querySelector('input.rename')) return;
+    const nm = el.querySelector('.nm');
+    if (!nm) return;
+
+    const input = document.createElement('input');
+    input.className = 'rename';
+    input.value = app.name;
+    nm.replaceWith(input);
+    input.focus();
+    input.select();
+
+    let settled = false;
+    const finish = async (commit) => {
+      if (settled) return;
+      settled = true;
+      const val = input.value.trim();
+      if (commit && val && val !== app.name) {
+        await window.dockpad.renameApp(app.path, val);
+      } else {
+        input.replaceWith(nm);
+      }
+    };
+
+    input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('contextmenu', (e) => e.stopPropagation());
+    input.addEventListener('keydown', (e) => {
+      e.stopPropagation();
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        finish(true);
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        finish(false);
+      }
+    });
+    input.addEventListener('blur', () => finish(true));
+  }
+
+  async function load() {
+    allApps = await window.dockpad.getApps();
+    lockedGroups = await window.dockpad.getLockedGroups();
+    dockPaths = await window.dockpad.getDockPaths();
+    const groups = await window.dockpad.getGroups();
+    if (currentGroup && !groups.includes(currentGroup)) currentGroup = '';
+    const s = await window.dockpad.getSettings();
+    if (s && SORT_LABEL[s.sortMode]) sortMode = s.sortMode;
+    syncSortUi();
+    await buildTabs();
+    filter();
+    searchEl.value = '';
+    searchEl.focus();
+  }
+
+  // ---- 从资源管理器拖文件夹 / 快捷方式进来（网格区域比 Dock 条宽松得多）----
+  function hasFiles(dt) {
+    if (!dt) return false;
+    return Array.from(dt.types || []).indexOf('Files') !== -1;
+  }
+
+  window.addEventListener('dragover', (e) => {
+    if (!hasFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    document.body.classList.add('drop-hover');
+  }, true);
+
+  window.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e.dataTransfer)) return;
+    if (e.relatedTarget) return; // 子元素之间移动也会触发 dragleave
+    document.body.classList.remove('drop-hover');
+  }, true);
+
+  window.addEventListener('drop', async (e) => {
+    if (!hasFiles(e.dataTransfer)) return; // 内部图标拖拽走 text/plain
+    e.preventDefault();
+    e.stopPropagation();
+    document.body.classList.remove('drop-hover');
+    const files = Array.from(e.dataTransfer.files || []);
+    const paths = files.map((f) => window.dockpad.getPathForFile(f)).filter(Boolean);
+    if (!paths.length) return;
+
+    const res = await window.dockpad.importDrop(paths);
+    if (!res || !res.added) return;
+
+    await load();
+    // 新建了分类就直接切过去，让用户看到导进来的东西
+    const created = (res.folders || []).find((f) => f.added);
+    if (created) {
+      currentGroup = created.name;
+      await buildTabs();
+      filter();
+    }
+  }, true);
+
+  searchEl.addEventListener('input', filter);
+  searchEl.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.dockpad.hideGrid();
+    if (e.key === 'Enter') {
+      const first = gridEl.querySelector('.app');
+      if (first) first.click();
+    }
+  });
+
+  veil.addEventListener('click', (e) => {
+    if (menuEl.classList.contains('on')) {
+      closeMenu();
+      return;
+    }
+    if (groupMenuEl.classList.contains('on')) {
+      closeGroupMenu();
+      return;
+    }
+    // 面板内的空白只用来收起浮层；关闭靠 Esc，或者点面板外面让窗口失焦
+    if (tonePanel.classList.contains('on') && !e.target.closest('#tonePanel, #toneBtn')) {
+      tonePanel.classList.remove('on');
+      toneBtn.classList.remove('on');
+    }
+  });
+  document.addEventListener('click', () => {
+    closeMenu();
+    closeGroupMenu();
+    closeSortMenu();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (sortMenu.classList.contains('on')) {
+      closeSortMenu();
+      return;
+    }
+    if (dlgEl.classList.contains('on')) {
+      closeDialog(null);
+      return;
+    }
+    if (groupMenuEl.classList.contains('on')) {
+      closeGroupMenu();
+      return;
+    }
+    if (menuEl.classList.contains('on')) {
+      closeMenu();
+      return;
+    }
+    window.dockpad.hideGrid();
+  });
+
+  // 网格一收起，之前验证过的密码就作废，下次打开要重新输
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState !== 'hidden') return;
+    unlockedGroups.clear();
+    closeDialog(null);
+    closeGroupMenu();
+    closeMenu();
+  });
+
+  window.dockpad.onAppsReset(() => load());
+
+  window.addEventListener('focus', () => {
+    searchEl.focus();
+    searchEl.select();
+  });
+
+  load();
+</script>
+</body>
+</html>

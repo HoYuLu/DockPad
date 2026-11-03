@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    cursor: default;
+  }
+  #bar {
+    position: absolute;
+    left: 50%;
+    bottom: 6px;
+    transform: translateX(-50%);
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+    height: calc(var(--icon-size, 50px) + 24px);
+    border-radius: 20px;
+    /* 透明度由设置界面控制（CSS 变量由 JS 写入），模糊固定 */
+    background: rgba(var(--dock-rgb, 28, 28, 30), var(--dock-alpha, 0.6));
+    backdrop-filter: blur(30px) saturate(180%);
+    -webkit-backdrop-filter: blur(30px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    box-shadow: 0 10px 34px rgba(0, 0, 0, 0.32);
+    white-space: nowrap;
+    /* 条身整体不做窗口拖拽区：否则从资源管理器拖文件过来时 drop 事件会被吞掉。
+       拖窗口靠上下两条隐形拖拽带，图标区留给拖放导入 */
+    cursor: default;
+  }
+  #bar.dragging { cursor: grabbing; }
+  /* 拖动 Dock 的握把。要点：
+     1) 必须是真实元素（伪元素上的 -webkit-app-region 不生效）
+     2) 命中区域要比视觉大——20px 宽时 Electron 不认这块拖拽区，实测 36×50 才稳
+     3) 视觉只有两根细线，背景全透明，看着不闹 */
+  #grip {
+    width: 36px;
+    height: calc(var(--icon-size, 50px));
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+    border-radius: 10px;
+    -webkit-app-region: drag;
+    cursor: grab;
+    background: transparent;
+    transition: background 0.16s ease;
+  }
+  #grip::before,
+  #grip::after {
+    content: '';
+    width: 2px;
+    height: 15px;
+    border-radius: 1px;
+    /* 中性灰：浅色底和深色底上都看得见 */
+    background: rgba(112, 112, 122, 0.8);
+    box-shadow: 0 0 1px rgba(0, 0, 0, 0.2), 0 0 2px rgba(255, 255, 255, 0.4);
+    transition: background 0.16s ease;
+  }
+  #grip:hover { background: rgba(112, 112, 122, 0.12); }
+  #grip:hover::before,
+  #grip:hover::after { background: rgba(88, 88, 98, 1); }
+  #grip:active { cursor: grabbing; }
+
+  .item {
+    position: relative;
+    width: var(--icon-size, 50px);
+    height: var(--icon-size, 50px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 13px;
+    cursor: pointer;
+    transition: transform 0.18s cubic-bezier(0.34, 1.56, 0.64, 1),
+                background 0.15s ease;
+    flex: 0 0 auto;
+    -webkit-app-region: no-drag;
+  }
+  .item:hover {
+    transform: translateY(-9px) scale(1.20);
+    background: rgba(255, 255, 255, 0.10);
+  }
+  .item:active { transform: translateY(-6px) scale(1.12); }
+  .item.dragging { opacity: 0.35; }
+  .item img {
+    width: calc(var(--icon-size, 50px) * 0.76);
+    height: calc(var(--icon-size, 50px) * 0.76);
+    object-fit: contain;
+    pointer-events: none;
+    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.28));
+  }
+  .item .dot {
+    width: calc(var(--icon-size, 50px) * 0.52);
+    height: calc(var(--icon-size, 50px) * 0.52);
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.22);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 13px;
+    font-weight: 600;
+    color: rgba(255, 255, 255, 0.85);
+  }
+  .item::after {
+    content: attr(data-name);
+    position: absolute;
+    bottom: calc(var(--icon-size, 50px) + 8px);
+    left: 50%;
+    transform: translateX(-50%) scale(0.92);
+    background: rgba(18, 18, 20, 0.94);
+    color: #fff;
+    font-size: 12px;
+    line-height: 1;
+    padding: 6px 10px;
+    border-radius: 7px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.14s ease, transform 0.14s ease;
+    max-width: 220px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .item:hover::after {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  .sep {
+    width: 1px;
+    height: 30px;
+    background: rgba(255, 255, 255, 0.16);
+    margin: 0 6px;
+    flex: 0 0 auto;
+  }
+  #gridBtn svg { width: 26px; height: 26px; }
+  /* 四个圆按钮：底色跟随设置里的「Dock 按钮颜色」，图标保持白色 */
+  #gridBtn, #deskBtn, #pcBtn, #taskBtn { background: rgba(var(--dock-btn-rgb, 255, 255, 255), 0.07); }
+  #gridBtn:hover, #deskBtn:hover, #pcBtn:hover, #taskBtn:hover { background: rgba(var(--dock-btn-rgb, 255, 255, 255), 0.16); }
+
+  /* 桌面图标开关：图标隐藏时半透明，一眼看出当前状态 */
+  #deskBtn svg { width: 25px; height: 25px; transition: opacity 0.15s; }
+  /* 隐藏态：眼睛划一道斜杠，不用凑近也看得出当前是隐藏状态 */
+  #deskBtn svg .slash { display: none; }
+  #deskBtn.off svg .slash { display: inline; }
+  #deskBtn.off svg { opacity: 0.66; }
+  #deskBtn.busy { opacity: 0.5; }
+
+  /* 此电脑：和左右两个按钮同样的 25px 画布，描边略细一点，别看着比邻居粗 */
+
+  /* 此电脑：和左右两个按钮同样的 25px 画布，描边略细一点，别看着比邻居粗 */
+  #pcBtn svg, #taskBtn svg { width: 25px; height: 25px; }
+
+  /* 从资源管理器拖文件夹/快捷方式进来时的提示 */
+  body.drop-hover #bar {
+    border-color: rgba(10, 132, 255, 0.95);
+    box-shadow: 0 0 0 2px rgba(10, 132, 255, 0.55), 0 10px 34px rgba(0, 0, 0, 0.42);
+  }
+
+  /* 运行中：图标底部一个呼吸小圆点 */
+  .item .rundot {
+    position: absolute;
+    left: 50%;
+    bottom: 2px;
+    width: 4px;
+    height: 4px;
+    margin-left: -2px;
+    border-radius: 50%;
+    background: rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.65);
+    opacity: 0;
+    transition: opacity 0.18s ease;
+    pointer-events: none;
+  }
+  .item.running .rundot { opacity: 1; }
+
+  /* ===== 竖排（贴屏幕左/右边）===== */
+  body.vertical #bar {
+    left: 50%;
+    bottom: auto;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    flex-direction: column;
+    width: 74px;
+    height: auto;
+    padding: 12px 8px;
+    gap: 6px;
+  }
+  body.vertical #grip {
+    flex-direction: column;
+    width: calc(var(--icon-size, 50px));
+    height: 36px;
+    margin-bottom: 2px;
+  }
+  body.vertical #grip::before,
+  body.vertical #grip::after {
+    width: 15px;
+    height: 2px;
+  }
+  body.vertical #apps {
+    flex-direction: column;
+    gap: 6px !important;
+  }
+  body.vertical .sep {
+    width: 30px;
+    height: 1px;
+    margin: 6px 0;
+  }
+  body.vertical .item:hover { transform: translateX(8px) scale(1.18); }
+  body.vertical .item:active { transform: translateX(6px) scale(1.1); }
+  body.vertical.snap-right .item:hover { transform: translateX(-8px) scale(1.18); }
+  body.vertical.snap-right .item:active { transform: translateX(-6px) scale(1.1); }
+  /* 竖排窗口只有 100px 宽，自带 tooltip 放不下会被裁，改用系统 title 提示 */
+  body.vertical .item::after { display: none; }
+</style>
+</head>
+<body>
+  <div id="bar">
+    <div id="grip" title="按住这里拖动 Dock"></div>
+    <div id="apps"></div>
+    <div class="sep"></div>
+    <div class="item" id="deskBtn" data-name="隐藏桌面图标">
+      <!-- 眼睛：一眼看出这是「显示/隐藏」开关，隐藏时加一道斜杠 -->
+      <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8"
+           stroke-linecap="round" stroke-linejoin="round">
+        <path d="M2.7 12S6.3 5.9 12 5.9 21.3 12 21.3 12 17.7 18.1 12 18.1 2.7 12 2.7 12z"/>
+        <circle cx="12" cy="12" r="2.9"/>
+        <path class="slash" d="M4.6 19.4 19.4 4.6"/>
+      </svg>
+    </div>
+    <div class="item" id="pcBtn" data-name="此电脑">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.7"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="1.9" y="5" width="13" height="8.6" rx="1.5"/>
+        <path d="M5.7 17h4.6M8 13.6v3.4"/>
+        <rect x="16.9" y="5" width="3.7" height="14.6" rx="1.3"/>
+        <path d="M17.9 7.8h1.7"/>
+      </svg>
+    </div>
+    <div class="item" id="taskBtn" data-name="任务管理器">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.25"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4.8" y="6" width="14.4" height="12" rx="1.9"/>
+        <path d="M7.5 14.3l2.2-2.9 2 1.7 2-3.1 2.1 2.7"/>
+      </svg>
+    </div>
+    <div class="item" id="gridBtn" data-name="全部应用">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.9"
+           stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="3" width="7" height="7" rx="1.6"/>
+        <rect x="14" y="3" width="7" height="7" rx="1.6"/>
+        <rect x="3" y="14" width="7" height="7" rx="1.6"/>
+        <rect x="14" y="14" width="7" height="7" rx="1.6"/>
+      </svg>
+    </div>
+  </div>
+
+<script>
+  const appsEl = document.getElementById('apps');
+
+  function makeItem(app) {
+    const el = document.createElement('div');
+    el.className = 'item';
+    el.dataset.name = app.name;
+    el.dataset.path = app.path;
+    el.dataset.proc = (app.proc || '').toLowerCase();
+    el.draggable = true;
+    if (app.icon) {
+      const img = document.createElement('img');
+      img.src = app.icon;
+      img.alt = '';
+      el.appendChild(img);
+    } else {
+      const dot = document.createElement('div');
+      dot.className = 'dot';
+      dot.textContent = app.name.slice(0, 1);
+      el.appendChild(dot);
+    }
+
+    // 正在运行的标记
+    const runDot = document.createElement('i');
+    runDot.className = 'rundot';
+    el.appendChild(runDot);
+
+    // 点击一律走 launch：Windows 程序多数带单实例机制，再启动一次就等于把已有窗口叫到前台。
+    // 试过用 PowerShell 的 WScript.Shell.AppActivate 精确切窗口，每次冷启动要 1.3 秒，
+    // 比直接 openPath 慢太多，不划算。
+    el.addEventListener('click', () => {
+      window.dockpad.launch(app.path);
+    });
+
+    el.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      if (confirm('把「' + app.name + '」从 Dock 移除？')) {
+        window.dockpad.removeFromDock(app.path);
+      }
+    });
+
+    let hoverTimer = null;
+    el.addEventListener('mouseenter', () => {
+      hoverTimer = setTimeout(() => {
+        const r = el.getBoundingClientRect();
+        const cx = (window.screenX || 0) + r.left + r.width / 2;
+        const cy = (window.screenY || 0) + r.top + r.height / 2;
+        window.dockpad.showPreview(app.path, cx, cy);
+      }, 420);
+    });
+    el.addEventListener('mouseleave', () => {
+      clearTimeout(hoverTimer);
+      window.dockpad.hidePreview();
+    });
+
+    el.addEventListener('dragstart', (e) => {
+      dragEl = el;
+      el.classList.add('dragging');
+      e.dataTransfer.effectAllowed = 'move';
+      try { e.dataTransfer.setData('text/plain', app.path); } catch (err) { /* ignore */ }
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      dragEl = null;
+      persistDockOrder();
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (!dragEl || dragEl === el) return;
+      const rect = el.getBoundingClientRect();
+      const after = e.clientX - rect.left > rect.width / 2;
+      const parent = el.parentNode;
+      if (after) parent.insertBefore(dragEl, el.nextSibling);
+      else parent.insertBefore(dragEl, el);
+    });
+
+    return el;
+  }
+
+  let dragEl = null;
+
+  function persistDockOrder() {
+    const paths = Array.from(document.querySelectorAll('#apps .item'))
+      .map((n) => n.dataset.path)
+      .filter(Boolean);
+    if (paths.length) window.dockpad.saveDockOrder(paths);
+  }
+
+  // ---- 运行状态：哪些图标对应的进程正开着 ----
+  let runningSet = new Set();
+
+  async function refreshRunning() {
+    let list = [];
+    try {
+      list = await window.dockpad.getRunningProcs();
+    } catch (e) {
+      return;
+    }
+    runningSet = new Set((list || []).map((s) => String(s).toLowerCase()));
+    document.querySelectorAll('#apps .item').forEach((el) => {
+      const proc = el.dataset.proc;
+      el.classList.toggle('running', !!proc && runningSet.has(proc));
+    });
+  }
+
+  // 4 秒一轮够了：这个小圆点只是提示，没必要 2.5 秒拉一次进程列表
+  // （主进程那边每轮都要跑一次 tasklist）。窗口不可见时直接跳过。
+  setInterval(() => {
+    if (!document.hidden) refreshRunning();
+  }, 4000);
+  window.addEventListener('focus', refreshRunning);
+
+  // ---- 贴边吸附：横排 / 竖排切换 ----
+  let vertical = false;
+
+  // 竖排窗口只有 100px 宽，自带 tooltip 会被窗口裁掉，改用系统 title
+  function syncTitles() {
+    document.querySelectorAll('.item').forEach((el) => {
+      if (vertical && el.dataset.name) el.title = el.dataset.name;
+      else el.removeAttribute('title');
+    });
+  }
+
+  // 把 Dock 条真实尺寸报给主进程，让窗口贴合内容，减少透明区域挡住桌面
+  function reportSize() {
+    requestAnimationFrame(() => {
+      const bar = document.getElementById('bar');
+      if (!bar) return;
+      const r = bar.getBoundingClientRect();
+      if (r.height > 0) {
+        window.dockpad.dockResize(Math.round(r.height), Math.round(r.width));
+      }
+    });
+  }
+
+  function applyOrient(orient) {
+    vertical = orient === 'left' || orient === 'right';
+    document.body.classList.toggle('vertical', vertical);
+    document.body.classList.toggle('snap-right', orient === 'right');
+    document.body.dataset.orient = orient;
+    syncTitles();
+    reportSize();
+  }
+
+  async function render() {
+    const apps = await window.dockpad.getPinned();
+    appsEl.innerHTML = '';
+    appsEl.style.display = 'flex';
+    appsEl.style.gap = '4px';
+    apps.forEach((a) => appsEl.appendChild(makeItem(a)));
+    syncTitles();
+    if (vertical) reportSize();
+    refreshRunning();
+  }
+
+  window.dockpad.onDockOrient((orient) => applyOrient(orient));
+
+  // ---- 设置：透明度和模糊强度 ----
+  function hexToRgbStr(hex) {
+    const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
+    if (!m) return null;
+    const n = parseInt(m[1], 16);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255].join(', ');
+  }
+
+  function applySettings(s) {
+    if (!s) return;
+    const root = document.documentElement.style;
+    root.setProperty('--dock-alpha', String(s.dockOpacity));
+    const rgb = hexToRgbStr(s.dockColor);
+    if (rgb) root.setProperty('--dock-rgb', rgb);
+    const btnRgb = hexToRgbStr(s.dockBtnColor);
+    if (btnRgb) root.setProperty('--dock-btn-rgb', btnRgb);
+    root.setProperty('--icon-size', (s.iconSize || 50) + 'px');
+    // 图标尺寸变了，条的高度也跟着变，竖排窗口要重新贴合内容
+    if (vertical) reportSize();
+  }
+
+  window.dockpad.getSettings().then(applySettings);
+  window.dockpad.onSettingsChanged(applySettings);
+
+  // ---- 从资源管理器拖文件夹 / 快捷方式进来 ----
+  // 文件夹 → 建同名分类并整批导入；.lnk/.url → 直接加进库
+  function hasFiles(dt) {
+    if (!dt) return false;
+    return Array.from(dt.types || []).indexOf('Files') !== -1;
+  }
+
+  window.addEventListener('dragover', (e) => {
+    if (!hasFiles(e.dataTransfer)) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+    document.body.classList.add('drop-hover');
+  }, true);
+
+  window.addEventListener('dragleave', (e) => {
+    if (!hasFiles(e.dataTransfer)) return;
+    if (e.relatedTarget) return; // 子元素之间移动也会触发 dragleave
+    document.body.classList.remove('drop-hover');
+  }, true);
+
+  window.addEventListener('drop', async (e) => {
+    if (!hasFiles(e.dataTransfer)) return; // 内部图标排序走的是 text/plain
+    e.preventDefault();
+    e.stopPropagation();
+    document.body.classList.remove('drop-hover');
+    const files = Array.from(e.dataTransfer.files || []);
+    const paths = files.map((f) => window.dockpad.getPathForFile(f)).filter(Boolean);
+    if (!paths.length) return;
+    await window.dockpad.importDrop(paths);
+  }, true);
+
+  // 「全部应用」按钮的屏幕矩形：面板从这个位置展开 / 缩回。
+  // 除了点击时用，还要主动报给主进程，托盘菜单和快捷键开面板时也走同一套动画。
+  function gridAnchorRect() {
+    const btn = document.getElementById('gridBtn');
+    if (!btn) return null;
+    const r = btn.getBoundingClientRect();
+    if (!r.width || !r.height) return null;
+    return {
+      x: Math.round(window.screenX + r.left),
+      y: Math.round(window.screenY + r.top),
+      w: Math.round(r.width),
+      h: Math.round(r.height),
+    };
+  }
+
+  function reportGridAnchor() {
+    const rect = gridAnchorRect();
+    if (rect) window.dockpad.reportGridAnchor(rect);
+  }
+
+  document.getElementById('gridBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const rect = gridAnchorRect();
+    if (rect) window.dockpad.reportGridAnchor(rect);
+    // 传按钮中心：从按键里长出来，而不是跟着鼠标点偏出去
+    window.dockpad.toggleGrid(rect || { x: Math.round(e.screenX), y: Math.round(e.screenY) });
+  });
+
+  // 此电脑：直接调资源管理器打开「此电脑」
+  document.getElementById('pcBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    window.dockpad.openThisPc();
+  });
+
+  // 任务管理器：直接起系统自带的 Taskmgr
+  document.getElementById('taskBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    window.dockpad.launch('C:\\Windows\\System32\\Taskmgr.exe');
+  });
+
+  window.addEventListener('resize', reportGridAnchor);
+  // 启动、切横竖排、增删应用都会让按钮换位置，每次渲染完补报一次
+  new ResizeObserver(reportGridAnchor).observe(document.getElementById('apps'));
+  // Dock 被拖走或自动隐藏后窗口坐标变了，按钮的屏幕位置也得跟着更新
+  window.dockpad.onDockMoved(reportGridAnchor);
+  setTimeout(reportGridAnchor, 60);
+
+  // 桌面图标开关：显示时点一下隐藏，隐藏时点一下恢复
+  (function initDeskBtn() {
+    const btn = document.getElementById('deskBtn');
+    if (!btn) return;
+    const paint = (visible) => {
+      const off = visible === false;
+      btn.classList.toggle('off', off);
+      btn.dataset.name = off ? '显示桌面图标' : '隐藏桌面图标';
+      if (vertical) btn.title = btn.dataset.name;
+    };
+    window.dockpad.desktopIcons('query').then((r) => {
+      if (r && r.ok) paint(r.visible);
+    });
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (btn.classList.contains('busy')) return;
+      btn.classList.add('busy');
+      try {
+        const r = await window.dockpad.desktopIcons('toggle');
+        if (r && r.ok) paint(r.visible);
+      } finally {
+        btn.classList.remove('busy');
+      }
+    });
+  })();
+
+  // 条身空白处右键 → 和托盘同一份菜单（含透明度档位）
+  document.getElementById('bar').addEventListener('contextmenu', (e) => {
+    if (e.target.closest('.item')) return; // 图标自己的右键是「从 Dock 移除」
+    e.preventDefault();
+    window.dockpad.dockMenu();
+  });
+
+  window.dockpad.onAppsReset(() => {
+    render();
+  });
+
+  render();
+</script>
+</body>
+</html>

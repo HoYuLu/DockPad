@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    -webkit-user-select: none;
+    user-select: none;
+    color: rgba(255,255,255,0.92);
+  }
+  #panel {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    border-radius: 12px;
+    /* 设置窗不透明：底下的窗口透上来会严重干扰阅读 */
+    background: linear-gradient(180deg, #202022, #171719);
+    border: 1px solid rgba(255,255,255,0.10);
+    overflow: hidden;
+  }
+  #titlebar {
+    height: 44px;
+    flex: 0 0 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 14px 0 18px;
+    border-bottom: 1px solid rgba(255,255,255,0.08);
+    -webkit-app-region: drag;
+  }
+  #titlebar h1 { font-size: 13px; font-weight: 600; letter-spacing: .3px; }
+  #close {
+    -webkit-app-region: no-drag;
+    width: 26px; height: 26px;
+    display: flex; align-items: center; justify-content: center;
+    border-radius: 6px; cursor: pointer;
+    color: rgba(255,255,255,0.55);
+    font-size: 15px; line-height: 1;
+  }
+  #close:hover { background: rgba(255,255,255,0.12); color: #fff; }
+
+  #body { flex: 1 1 auto; overflow-y: auto; padding: 4px 18px 14px; }
+  #body::-webkit-scrollbar { width: 8px; }
+  #body::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.16); border-radius: 4px; }
+
+  .keyrec {
+    min-width: 132px;
+    padding: 7px 12px;
+    font-family: inherit;
+    font-size: 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .keyrec:hover { background: rgba(255, 255, 255, 0.16); }
+  .keyrec.rec { border-color: rgba(10, 132, 255, 0.9); background: rgba(10, 132, 255, 0.22); }
+  .keyrec.custom { color: #7fc4ff; }
+  .keyrec.off { color: rgba(255, 255, 255, 0.45); }
+  .mini {
+    align-self: flex-start;
+    padding: 6px 12px;
+    font-family: inherit;
+    font-size: 12px;
+    border-radius: 8px;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: transparent;
+    color: rgba(255, 255, 255, 0.72);
+    cursor: pointer;
+  }
+  .mini:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+
+  .sec { margin-top: 14px; }
+  .sec > h2 {
+    font-size: 11px; font-weight: 600; letter-spacing: .8px;
+    text-transform: uppercase;
+    color: rgba(255,255,255,0.38);
+    margin-bottom: 7px; padding-left: 2px;
+  }
+  .row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 10px 12px;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.06);
+    border-radius: 9px;
+    margin-bottom: 6px;
+  }
+  .row .label { font-size: 13px; }
+  .row .hint { font-size: 11px; color: rgba(255,255,255,0.45); margin-top: 2px; }
+  .row .val {
+    font-size: 12px; font-variant-numeric: tabular-nums;
+    color: rgba(255,255,255,0.62); min-width: 52px; text-align: right;
+  }
+  .stack { display: block; }
+  .stack .top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+
+  input[type=range] {
+    -webkit-appearance: none; appearance: none;
+    width: 100%; height: 22px; background: transparent; cursor: pointer;
+  }
+  input[type=range]::-webkit-slider-runnable-track {
+    height: 4px; border-radius: 2px;
+    background: rgba(255,255,255,0.16);
+  }
+  input[type=range]::-webkit-slider-thumb {
+    -webkit-appearance: none; appearance: none;
+    width: 14px; height: 14px; border-radius: 50%;
+    background: #fff; margin-top: -5px;
+    box-shadow: 0 1px 4px rgba(0,0,0,.45);
+  }
+
+  /* 取色块 */
+  .cbox {
+    -webkit-appearance: none; appearance: none;
+    width: 52px; height: 28px; padding: 0; flex: 0 0 auto;
+    border: 1px solid rgba(255,255,255,0.22);
+    border-radius: 8px; background: transparent; cursor: pointer;
+  }
+  .cbox::-webkit-color-swatch-wrapper { padding: 3px; }
+  .cbox::-webkit-color-swatch { border: none; border-radius: 5px; }
+
+  .switch {    position: relative; width: 40px; height: 23px; flex: 0 0 auto;
+    border-radius: 12px; background: rgba(255,255,255,0.16);
+    cursor: pointer; transition: background .18s ease;
+  }
+  .switch::after {
+    content: ''; position: absolute; top: 3px; left: 3px;
+    width: 17px; height: 17px; border-radius: 50%;
+    background: #fff; transition: transform .18s ease;
+    box-shadow: 0 1px 3px rgba(0,0,0,.4);
+  }
+  .switch.on { background: #0a84ff; }
+  .switch.on::after { transform: translateX(17px); }
+
+  .btns { display: flex; gap: 8px; flex-wrap: wrap; }
+  button {
+    flex: 1 1 0; min-width: 120px;
+    padding: 9px 12px;
+    font-family: inherit; font-size: 12.5px;
+    color: rgba(255,255,255,0.9);
+    background: rgba(255,255,255,0.09);
+    border: 1px solid rgba(255,255,255,0.12);
+    border-radius: 8px; cursor: pointer;
+    transition: background .15s ease;
+  }
+  button:hover { background: rgba(255,255,255,0.16); }
+  button:active { background: rgba(255,255,255,0.22); }
+  button:disabled { opacity: 0.55; cursor: default; }
+  button.primary { background: rgba(10,132,255,0.85); border-color: rgba(10,132,255,0.9); }
+  button.primary:hover { background: rgba(10,132,255,1); }
+
+  #libInfo { font-size: 12px; color: rgba(255,255,255,0.6); line-height: 1.55; }
+  #libInfo b { color: rgba(255,255,255,0.9); font-weight: 600; }
+  #libPath {
+    font-size: 10.5px; color: rgba(255,255,255,0.3);
+    word-break: break-all; margin-top: 4px; line-height: 1.4;
+  }
+  #toast {
+    position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%) translateY(8px);
+    background: rgba(10,132,255,0.95); color: #fff;
+    font-size: 12px; padding: 8px 16px; border-radius: 8px;
+    opacity: 0; pointer-events: none; transition: opacity .2s ease, transform .2s ease;
+    white-space: nowrap; max-width: 90%;
+  }
+  #toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+</style>
+</head>
+<body>
+  <div id="panel">
+    <div id="titlebar">
+      <h1>DockPad 设置</h1>
+      <div id="close" title="关闭">✕</div>
+    </div>
+
+    <div id="body">
+      <div class="sec">
+        <h2>外观</h2>
+        <div class="row stack">
+          <div class="top">
+            <span class="label">Dock 透明度</span>
+            <span class="val" id="opacityVal">60%</span>
+          </div>
+          <input type="range" id="dockOpacity" min="0" max="100" step="1" value="60">
+        </div>
+        <div class="row stack">
+          <div class="top">
+            <span class="label">Dock 图标大小</span>
+            <span class="val" id="iconSizeVal">50px</span>
+          </div>
+          <input type="range" id="iconSize" min="36" max="64" step="1" value="50">
+        </div>
+        <div class="row stack">
+          <div class="top">
+            <span class="label">面板图标大小</span>
+            <span class="val" id="gridIconVal">54px</span>
+          </div>
+          <input type="range" id="gridIconSize" min="36" max="96" step="1" value="54">
+        </div>
+        <div class="row stack">
+          <div class="top">
+            <span class="label">应用面板透明度</span>
+            <span class="val" id="panelVal">92%</span>
+          </div>
+          <input type="range" id="panelOpacity" min="0" max="100" step="1" value="92">
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">应用面板底色</div>
+            <div class="hint">深色会自动把控件文字切成白色</div>
+          </div>
+          <input type="color" class="cbox" id="panelColor" value="#fafafc">
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">快捷方式名字颜色</div>
+            <div class="hint">图标下方那行文字</div>
+          </div>
+          <input type="color" class="cbox" id="appNameColor" value="#1c1c1e">
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2>行为</h2>
+        <div class="row stack">
+          <div class="top">
+            <span class="label">贴边吸附距离</span>
+            <span class="val" id="snapVal">30px</span>
+          </div>
+          <input type="range" id="snapEdge" min="0" max="120" step="1" value="30">
+          <div class="hint">拖到屏幕左右边缘这个距离内自动吸附竖排，0 = 关闭</div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">悬停窗口预览</div>
+            <div class="hint">停在图标上 0.4 秒弹出窗口缩略图</div>
+          </div>
+          <div class="switch on" id="hoverPreview"></div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">Dock 始终置顶</div>
+            <div class="hint">关闭时让位给浏览器和游戏</div>
+          </div>
+          <div class="switch" id="dockOnTop"></div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">自动隐藏 Dock</div>
+            <div class="hint">鼠标移开后收起，移到屏幕底边再滑出（仅横排）</div>
+          </div>
+          <div class="switch" id="autoHide"></div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">点外部关闭面板</div>
+            <div class="hint">关闭后只能用 Esc 或 Dock 上的网格按钮收起</div>
+          </div>
+          <div class="switch on" id="closeOnBlur"></div>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">省内存模式（关闭 GPU 加速）</div>
+            <div class="hint" id="lowGpuHint">可省约 120MB 内存；面板背景模糊与动画改用软件渲染，可能变卡。重启 DockPad 后生效</div>
+          </div>
+          <div class="switch" id="lowGpu"></div>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2>快捷键</h2>
+        <div class="row">
+          <div>
+            <div class="label">打开应用面板</div>
+            <div class="hint" id="hkPanelHint">点右侧按钮后按下组合键；按 Backspace 设为不绑定</div>
+          </div>
+          <button class="keyrec" id="hkPanel" data-key="hotkeyPanel">默认</button>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">打开设置</div>
+            <div class="hint" id="hkSettingsHint">点右侧按钮后按下组合键；按 Backspace 设为不绑定</div>
+          </div>
+          <button class="keyrec" id="hkSettings" data-key="hotkeySettings">默认</button>
+        </div>
+        <div class="row">
+          <div>
+            <div class="label">扫描文件夹添加应用</div>
+            <div class="hint" id="hkScanHint">点右侧按钮后按下组合键；按 Backspace 设为不绑定</div>
+          </div>
+          <button class="keyrec" id="hkScan" data-key="hotkeyScan">默认</button>
+        </div>
+        <div class="row stack">
+          <div class="hint">录制时会临时停用现有快捷键，录完自动生效。按 Backspace/Delete 可设为「不绑定」，留空则用内置默认组合；若被其它软件占用，会自动退回默认组合。</div>
+          <button class="mini" id="hkReset">全部恢复默认</button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2>应用库</h2>
+        <div class="row">
+          <div id="libInfo" style="width:100%">
+            正在读取…
+            <div id="libPath"></div>
+          </div>
+        </div>
+        <div class="btns">
+          <button id="scanApps" class="primary">一键添加应用…</button>
+        </div>
+        <div class="btns" style="margin-top:8px">
+          <button id="import">从文件夹导入…</button>
+          <button id="addApp">添加应用</button>
+        </div>
+      </div>
+
+      <div class="sec">
+        <h2>系统</h2>
+        <div class="row">
+          <div>
+            <div class="label">开机自启</div>
+            <div class="hint">登录 Windows 后自动启动 DockPad</div>
+          </div>
+          <div class="switch" id="autoStart"></div>
+        </div>
+        <div class="btns">
+          <button id="resetPos">重置 Dock 位置</button>
+          <button id="clearIcons">清除图标缓存</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="toast"></div>
+  </div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let toastTimer = null;
+
+  function toast(msg) {
+    const el = $('toast');
+    el.textContent = msg;
+    el.classList.add('show');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => el.classList.remove('show'), 1800);
+  }
+
+  // 滑块的改动很密集，攒到下一帧再发，别把 IPC 打满
+  let pending = null;
+  let rafId = 0;
+  function pushPatch(patch) {
+    pending = Object.assign(pending || {}, patch);
+    if (rafId) return;
+    rafId = requestAnimationFrame(async () => {
+      rafId = 0;
+      const p = pending;
+      pending = null;
+      if (p) await window.dockpad.setSettings(p);
+    });
+  }
+
+  function bindSwitch(el, onChange) {
+    el.addEventListener('click', () => {
+      el.classList.toggle('on');
+      onChange(el.classList.contains('on'));
+    });
+  }
+
+  function setSwitch(el, on) {
+    el.classList.toggle('on', !!on);
+  }
+
+  function fill(s) {
+    window.__lastSettings = s
+    $('dockOpacity').value = Math.round(s.dockOpacity * 100);
+    $('opacityVal').textContent = Math.round(s.dockOpacity * 100) + '%';
+    $('iconSize').value = s.iconSize;
+    $('iconSizeVal').textContent = s.iconSize + 'px';
+    $('gridIconSize').value = s.gridIconSize;
+    $('gridIconVal').textContent = s.gridIconSize + 'px';
+    $('panelOpacity').value = Math.round(s.panelOpacity * 100);
+    $('panelVal').textContent = Math.round(s.panelOpacity * 100) + '%';
+    if (s.panelColor) $('panelColor').value = s.panelColor;
+    if (s.appNameColor) $('appNameColor').value = s.appNameColor;
+    $('snapEdge').value = s.snapEdge;
+    $('snapVal').textContent = s.snapEdge === 0 ? '已关闭' : s.snapEdge + 'px';
+    setSwitch($('hoverPreview'), s.hoverPreview);
+    setSwitch($('dockOnTop'), s.dockOnTop);
+    setSwitch($('autoHide'), s.autoHide);
+    setSwitch($('closeOnBlur'), s.closeOnBlur);
+    setSwitch($('lowGpu'), s.lowGpu);
+    setTimeout(refreshHotkeys, 60);
+  }
+
+  $('dockOpacity').addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    $('opacityVal').textContent = v + '%';
+    pushPatch({ dockOpacity: v / 100 });
+  });
+
+  $('iconSize').addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    $('iconSizeVal').textContent = v + 'px';
+    pushPatch({ iconSize: v });
+  });
+
+  $('gridIconSize').addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    $('gridIconVal').textContent = v + 'px';
+    pushPatch({ gridIconSize: v });
+  });
+
+  $('panelOpacity').addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    $('panelVal').textContent = v + '%';
+    pushPatch({ panelOpacity: v / 100 });
+  });
+
+  $('panelColor').addEventListener('input', (e) => pushPatch({ panelColor: e.target.value }));
+  $('appNameColor').addEventListener('input', (e) => pushPatch({ appNameColor: e.target.value }));
+
+  $('snapEdge').addEventListener('input', (e) => {
+    const v = Number(e.target.value);
+    $('snapVal').textContent = v === 0 ? '已关闭' : v + 'px';
+    pushPatch({ snapEdge: v });
+  });
+
+  bindSwitch($('hoverPreview'), (on) => pushPatch({ hoverPreview: on }));
+  bindSwitch($('dockOnTop'), (on) => pushPatch({ dockOnTop: on }));
+  bindSwitch($('autoHide'), (on) => pushPatch({ autoHide: on }));
+  bindSwitch($('closeOnBlur'), (on) => pushPatch({ closeOnBlur: on }));
+  // ---- 快捷键录制 ----
+  const HK_ITEMS = [
+    { key: 'hotkeyPanel', btn: 'hkPanel' },
+    { key: 'hotkeySettings', btn: 'hkSettings' },
+    { key: 'hotkeyScan', btn: 'hkScan' },
+  ]
+
+  // 浏览器按键 → Electron accelerator
+  function accelFromEvent(e) {
+    const mods = []
+    if (e.ctrlKey) mods.push('Control')
+    if (e.altKey) mods.push('Alt')
+    if (e.shiftKey) mods.push('Shift')
+    if (e.metaKey) mods.push('Super')
+    const k = e.key
+    if (!k || ['Control', 'Alt', 'Shift', 'Meta', 'CapsLock'].includes(k)) return null
+    const named = {
+      ' ': 'Space', Escape: 'Escape', Enter: 'Enter', Tab: 'Tab', Backspace: 'Backspace',
+      Delete: 'Delete', Insert: 'Insert', Home: 'Home', End: 'End',
+      ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right',
+      PageUp: 'PageUp', PageDown: 'PageDown',
+    }
+    let key
+    if (named[k]) key = named[k]
+    else if (/^F\d{1,2}$/.test(k)) key = k.toUpperCase()
+    else if (k.length === 1) key = k.toUpperCase()
+    else return null
+    // 没修饰键的组合会抢走普通打字，不允许
+    if (!mods.length) return null
+    return mods.join('+') + '+' + key
+  }
+
+  const prettyKey = (accel) => String(accel || '').replace(/Control/g, 'Ctrl').replace(/Super/g, 'Win')
+
+  function paintHotkeys(active) {
+    const conf = window.__lastSettings || {}
+    for (const item of HK_ITEMS) {
+      const btn = $(item.btn)
+      if (!btn) continue
+      const custom = conf[item.key]
+      const live = active && active[{ hotkeyPanel: 'panel', hotkeySettings: 'settings', hotkeyScan: 'scan' }[item.key]]
+      if (custom && String(custom).toLowerCase() === 'none') {
+        // 明确设为不绑定：不给它注册任何组合，界面上也照实说
+        btn.textContent = '不绑定'
+        btn.classList.add('custom', 'off')
+        btn.title = '这个动作没有快捷键；点此可重新录制'
+        continue
+      }
+      btn.classList.remove('off')
+      if (custom) {
+        btn.textContent = prettyKey(custom)
+        btn.classList.add('custom')
+        btn.title = live && live !== custom ? '该组合被占用，当前实际使用：' + prettyKey(live) : ''
+      } else {
+        btn.textContent = live ? '默认（' + prettyKey(live) + '）' : '默认'
+        btn.classList.remove('custom')
+        btn.title = ''
+      }
+    }
+  }
+
+  async function refreshHotkeys() {
+    let active = {}
+    try { active = await window.dockpad.getShortcuts() } catch (e) { /* ignore */ }
+    // 直接读一次设置，别指望广播的先后顺序（录完立刻刷新时尤其重要）
+    try { window.__lastSettings = await window.dockpad.getSettings() } catch (e) { /* ignore */ }
+    paintHotkeys(active)
+  }
+
+  function startRecord(item) {
+    const btn = $(item.btn)
+    if (!btn || btn.classList.contains('rec')) return
+    btn.classList.add('rec')
+    const before = btn.textContent
+    btn.textContent = '按下组合键…'
+    window.dockpad.suspendShortcuts()
+    const onKey = async (ev) => {
+      ev.preventDefault()
+      ev.stopPropagation()
+      if (ev.key === 'Escape') return finish(null)
+      // 回车/退格/删除（不带修饰键）= 干脆不绑定这个动作
+      if (!ev.ctrlKey && !ev.altKey && !ev.shiftKey && !ev.metaKey &&
+          ['Backspace', 'Delete', 'Enter'].includes(ev.key)) {
+        return finish('none')
+      }
+      const accel = accelFromEvent(ev)
+      if (!accel) {
+        btn.textContent = '需要 Ctrl/Alt/Shift + 按键（Backspace 不绑定）'
+        return
+      }
+      return finish(accel)
+    }
+    const finish = async (accel) => {
+      document.removeEventListener('keydown', onKey, true)
+      btn.classList.remove('rec')
+      if (!accel) {
+        btn.textContent = before
+        await window.dockpad.resumeShortcuts()
+        await refreshHotkeys()
+        return
+      }
+      await window.dockpad.setSettings({ [item.key]: accel })
+      // 恢复注册（会按新设置来），再把实际生效的组合显示出来
+      await window.dockpad.resumeShortcuts()
+      await refreshHotkeys()
+    }
+    document.addEventListener('keydown', onKey, true)
+  }
+
+  for (const item of HK_ITEMS) {
+    const btn = $(item.btn)
+    if (btn) btn.addEventListener('click', (e) => { e.stopPropagation(); startRecord(item) })
+  }
+
+  $('hkReset')?.addEventListener('click', async (e) => {
+    e.stopPropagation()
+    await pushPatch({ hotkeyPanel: '', hotkeySettings: '', hotkeyScan: '' })
+    await window.dockpad.resumeShortcuts()
+    await refreshHotkeys()
+  })
+
+  setTimeout(refreshHotkeys, 300)
+
+  bindSwitch($('lowGpu'), (on) => {
+    pushPatch({ lowGpu: on });
+    $('lowGpuHint').textContent = on
+      ? '已开启，重启 DockPad 后生效（预计省约 120MB）'
+      : '已关闭，重启 DockPad 后生效';
+  });
+
+  bindSwitch($('autoStart'), async (on) => {
+    const ok = await window.dockpad.setAutoStart(on);
+    if (!ok) {
+      $('autoStart').classList.toggle('on', !on);
+      toast('写入注册表失败');
+    } else {
+      toast(on ? '已开启开机自启' : '已关闭开机自启');
+    }
+  });
+
+  async function loadLib() {
+    const info = await window.dockpad.getLibraryInfo();
+    $('libInfo').innerHTML =
+      '<b>' + info.apps + '</b> 个应用 · <b>' + info.groups.length + '</b> 个分类' +
+      (info.groups.length ? '（' + info.groups.join(' / ') + '）' : '') +
+      '<div id="libPath">库文件：' + info.file + '</div>';
+  }
+
+  $('scanApps').addEventListener('click', async () => {
+    const btn = $('scanApps');
+    const old = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '扫描中…';
+    try {
+      const res = await window.dockpad.scanApps();
+      if (!res || res.canceled) return;
+      if (res.ok === false) return toast(res.error || '扫描失败');
+      if (!res.scanned) return toast('这个文件夹里没找到可用的程序');
+      const parts = ['新增 ' + res.added + ' 个'];
+      if (res.duplicate) parts.push('跳过已存在 ' + res.duplicate + ' 个');
+      toast(parts.join('，'));
+      loadLib();
+    } finally {
+      btn.disabled = false;
+      btn.textContent = old;
+    }
+  });
+
+  $('import').addEventListener('click', async () => {
+    const res = await window.dockpad.importFolder();
+    if (!res || res.ok === false) return toast(res && res.error ? res.error : '导入失败');
+    toast(res.added ? '新增 ' + res.added + ' 个应用' : '没有新应用可导入');
+    loadLib();
+  });
+
+  $('addApp').addEventListener('click', async () => {
+    const res = await window.dockpad.pickApp();
+    if (res && res.ok) {
+      toast('已添加：' + (res.name || ''));
+      loadLib();
+    } else if (res && res.error) {
+      toast(res.error);
+    }
+  });
+
+  $('resetPos').addEventListener('click', async () => {
+    await window.dockpad.resetDockPos();
+    toast('Dock 已回到底部居中');
+  });
+
+  $('clearIcons').addEventListener('click', async () => {
+    await window.dockpad.clearIconCache();
+    toast('图标缓存已清除，正在重取');
+  });
+
+  $('close').addEventListener('click', () => window.dockpad.closeSettings());
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') window.dockpad.closeSettings();
+  });
+
+  (async () => {
+    fill(await window.dockpad.getSettings());
+    setSwitch($('autoStart'), await window.dockpad.getAutoStart());
+    loadLib();
+  })();
+
+  // 从托盘菜单改透明度时，这里的滑块要跟着动；正在拖滑块时别打断
+  window.dockpad.onSettingsChanged((s) => {
+    const ae = document.activeElement;
+    if (ae && ae.tagName === 'INPUT' && ae.type === 'range') return;
+    fill(s);
+  });
+</script>
+</body>
+</html>

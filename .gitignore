@@ -1,0 +1,32 @@
+# 依赖
+node_modules/
+
+# 打包产物
+dist/
+out/
+build/
+
+# 运行时日志
+log/
+*.log
+
+# 本机生成 / 与本机相关，不进仓库
+# icon-fallback.json 是从本机应用的 exe 资源里抠出来的图标兜底表，
+# 内容取决于本机装了哪些软件，体积也有几 MB，所以忽略。
+icon-fallback.json
+
+# 备份与压缩包
+*.bak
+*.zip
+*.7z
+*.rar
+
+# 可执行文件（仓库只放源码）
+*.exe
+*.dll
+
+# 系统杂项
+Thumbs.db
+desktop.ini
+.DS_Store
+*.swp

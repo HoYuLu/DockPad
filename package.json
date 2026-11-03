@@ -1,0 +1,36 @@
+{
+  "name": "dockpad",
+  "productName": "DockPad",
+  "version": "1.0.0",
+  "description": "Windows 桌面 Dock 栏 + 可搜索的全部应用启动面板（Electron）",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "pack": "electron-packager . DockPad --platform=win32 --arch=x64 --out=dist --overwrite --icon=icon.ico --ignore=\"^/(dist|log|\\.git)\""
+  },
+  "keywords": [
+    "dock",
+    "launcher",
+    "electron",
+    "windows",
+    "app-launcher",
+    "desktop"
+  ],
+  "author": "DockPad",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "electron": "^33.2.0",
+    "electron-packager": "^17.1.2"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/HoYuLu/DockPad.git"
+  },
+  "homepage": "https://github.com/HoYuLu/DockPad#readme",
+  "bugs": {
+    "url": "https://github.com/HoYuLu/DockPad/issues"
+  }
+}
