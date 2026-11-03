@@ -201,7 +201,7 @@
     <div id="grip" title="按住这里拖动 Dock"></div>
     <div id="apps"></div>
     <div class="sep"></div>
-    <div class="item" id="deskBtn" data-name="隐藏桌面图标">
+    <div class="item" id="deskBtn" data-name="隐藏桌面图标" title="显示 / 隐藏桌面图标">
       <!-- 眼睛：一眼看出这是「显示/隐藏」开关，隐藏时加一道斜杠 -->
       <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round">
@@ -210,7 +210,7 @@
         <path class="slash" d="M4.6 19.4 19.4 4.6"/>
       </svg>
     </div>
-    <div class="item" id="pcBtn" data-name="此电脑">
+    <div class="item" id="pcBtn" data-name="此电脑" title="打开此电脑">
       <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.7"
            stroke-linecap="round" stroke-linejoin="round">
         <rect x="1.9" y="5" width="13" height="8.6" rx="1.5"/>
@@ -219,14 +219,14 @@
         <path d="M17.9 7.8h1.7"/>
       </svg>
     </div>
-    <div class="item" id="taskBtn" data-name="任务管理器">
+    <div class="item" id="taskBtn" data-name="任务管理器" title="打开任务管理器">
       <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.25"
            stroke-linecap="round" stroke-linejoin="round">
         <rect x="4.8" y="6" width="14.4" height="12" rx="1.9"/>
         <path d="M7.5 14.3l2.2-2.9 2 1.7 2-3.1 2.1 2.7"/>
       </svg>
     </div>
-    <div class="item" id="gridBtn" data-name="全部应用">
+    <div class="item" id="gridBtn" data-name="全部应用" title="打开全部应用面板">
       <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.9"
            stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="3" width="7" height="7" rx="1.6"/>
@@ -357,7 +357,8 @@
   // 关掉预览就只能靠系统 tooltip —— 窗口只有图标那么高，自绘气泡一定放不下。
   let previewOn = true;
   function syncTitles() {
-    document.querySelectorAll('.item').forEach((el) => {
+    // 只管应用图标（带 data-path 的）；右侧四个固定按钮有自己的 title，别被这里清掉
+    document.querySelectorAll('.item[data-path]').forEach((el) => {
       if (!previewOn && el.dataset.name) el.title = el.dataset.name;
       else el.removeAttribute('title');
     });

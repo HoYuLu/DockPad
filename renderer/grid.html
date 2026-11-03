@@ -2126,22 +2126,43 @@
       showGroupInput();
     });
     tabsEl.appendChild(addBtn);
+
+    // 新建分类的输入框要在「分类列表重建」后仍然存在：
+    // 以前点一下别的分类 / 拖个图标就会触发 buildTabs，输入框被 innerHTML 清掉，
+    // 看起来就是"点了面板里其他地方就把新建取消了"。
+    if (pendingGroup !== null && !tabsEl.querySelector('input.group-input')) {
+      tabsEl.appendChild(makeGroupInput());
+      const el = tabsEl.querySelector('input.group-input');
+      if (el) {
+        const pos = el.value.length;
+        requestAnimationFrame(() => {
+          el.focus();
+          try { el.setSelectionRange(pos, pos) } catch (err) { /* ignore */ }
+        });
+      }
+    }
   }
 
-  function showGroupInput() {
-    if (tabsEl.querySelector('input.group-input')) return;
+  // 正在新建的分类名：null = 没在新建；'' = 刚点开还没输入
+  let pendingGroup = null;
+
+  function makeGroupInput() {
     const input = document.createElement('input');
     input.className = 'group-input';
     input.placeholder = '分类名，回车创建';
+    input.value = pendingGroup || '';
     input.addEventListener('click', (e) => e.stopPropagation());
+    input.addEventListener('input', () => { pendingGroup = input.value; });
     input.addEventListener('keydown', async (e) => {
       e.stopPropagation();
       if (e.key === 'Escape') {
+        pendingGroup = null;
         input.remove();
         return;
       }
       if (e.key !== 'Enter') return;
       const name = input.value.trim();
+      pendingGroup = null;
       if (!name) {
         input.remove();
         return;
@@ -2149,9 +2170,18 @@
       const res = await window.dockpad.createGroup(name);
       input.remove();
       if (!res || !res.ok) notice((res && res.error) || '创建失败');
+      else buildTabs();
     });
-    tabsEl.appendChild(input);
-    input.focus();
+    return input;
+  }
+
+  function showGroupInput() {
+    if (tabsEl.querySelector('input.group-input')) {
+      tabsEl.querySelector('input.group-input').focus();
+      return;
+    }
+    pendingGroup = '';
+    buildTabs();
   }
 
   function startRename(el, app) {
