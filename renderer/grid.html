@@ -1968,7 +1968,9 @@
   function makeApp(app) {
     const el = document.createElement('div');
     el.className = app.missing ? 'app missing' : 'app';
-    el.title = app.missing ? app.name + '（快捷方式已失效）' : app.name;
+    // 名字本来就写在图标下面，不再额外挂系统 tooltip；
+    // 只有「快捷方式失效」这种需要解释的状态才提示
+    if (app.missing) el.title = app.name + '（快捷方式已失效）';
 
     const ic = document.createElement('div');
     ic.className = 'ic';
