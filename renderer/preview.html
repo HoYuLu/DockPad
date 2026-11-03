@@ -47,9 +47,15 @@
     display: block;
   }
   #shot[src=""] { visibility: hidden; }
-  /* 没有缩略图时收成一条只有名字的小卡片 */
+  /* 没有缩略图时收成一条只有名字的小黑框（和原来 Dock 上的气泡一个观感） */
   body.no-shot #shot { display: none; }
-  body.no-shot #card { justify-content: center; }
+  body.no-shot #card {
+    justify-content: center;
+    padding: 0 10px;
+    border-radius: 8px;
+    gap: 0;
+  }
+  body.no-shot #name { color: #fff; }
 </style>
 </head>
 <body>

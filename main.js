@@ -687,11 +687,13 @@ ipcMain.handle('show-preview', async (event, targetPath, appName, anchorX, ancho
   await previewReady
   if (!previewWin || previewWin.isDestroyed()) return false
 
-  // 有缩略图时用大卡片；只有名字时按文字长度收成一条小卡片
+  // 有缩略图时用大卡片；只有名字时做成和原来一样的紧凑小黑框（高度只够一行字），
+  // 并且离 Dock 顶边留 16px，免得鼠标箭头压到框上
   const label = String(appName || '')
   const chars = Array.from(label).length
-  const W = url ? 380 : Math.min(380, Math.max(116, chars * 14 + 30))
-  const H = url ? 252 : 58
+  const W = url ? 380 : Math.min(320, Math.max(64, chars * 13 + 24))
+  const H = url ? 252 : 30
+  const GAP = url ? 8 : 16
   const cur = previewWin.getBounds()
   if (cur.width !== W || cur.height !== H) previewWin.setBounds({ x: cur.x, y: cur.y, width: W, height: H })
 
@@ -704,12 +706,12 @@ ipcMain.handle('show-preview', async (event, targetPath, appName, anchorX, ancho
   let y
 
   if (isVertical(dockOrient)) {
-    x = dockOrient === 'left' ? db.x + db.width + 8 : db.x - b.width - 8
+    x = dockOrient === 'left' ? db.x + db.width + GAP : db.x - b.width - GAP
     y = (anchorY || db.y + db.height / 2) - b.height / 2
   } else {
     x = anchorX - b.width / 2
-    y = db.y - b.height - 8
-    if (y < area.y + 8) y = db.y + db.height + 8 // 上方放不下就翻到下面
+    y = db.y - b.height - GAP
+    if (y < area.y + 8) y = db.y + db.height + GAP // 上方放不下就翻到下面
   }
 
   x = Math.round(Math.max(area.x + 8, Math.min(x, area.x + area.width - b.width - 8)))
