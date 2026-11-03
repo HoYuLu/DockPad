@@ -125,11 +125,13 @@ DockPad 是一个 Windows 桌面美化 + 启动器工具：底部常驻一条 Do
 
 ---
 
-## 运行
+## 下载与运行
 
-### 直接用打包版
+### 直接用打包版（推荐）
 
-解压后双击 `DockPad.exe`。首次运行会在 `%APPDATA%\DockPad` 生成配置目录。
+到 **[Releases](https://github.com/HoYuLu/DockPad/releases)** 下载 `DockPad-1.0.0-windows-x64.zip`，解压后双击 `DockPad.exe` 就能用——无需安装、不需要管理员权限。首次运行会在 `%APPDATA%\DockPad` 生成配置目录。
+
+> 仓库里只放源码，不放二进制：`DockPad.exe` 连同 Electron 运行时约 190MB，提交进 git 会让每次 clone 都多拖一份，所以打包产物走 Release 分发。
 
 ### 从源码运行
 
