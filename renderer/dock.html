@@ -109,30 +109,6 @@
     font-weight: 600;
     color: rgba(255, 255, 255, 0.85);
   }
-  .item::after {
-    content: attr(data-name);
-    position: absolute;
-    bottom: calc(var(--icon-size, 50px) + 8px);
-    left: 50%;
-    transform: translateX(-50%) scale(0.92);
-    background: rgba(18, 18, 20, 0.94);
-    color: #fff;
-    font-size: 12px;
-    line-height: 1;
-    padding: 6px 10px;
-    border-radius: 7px;
-    white-space: nowrap;
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.14s ease, transform 0.14s ease;
-    max-width: 220px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
-  .item:hover::after {
-    opacity: 1;
-    transform: translateX(-50%) scale(1);
-  }
   .sep {
     width: 1px;
     height: 30px;
@@ -218,7 +194,6 @@
   body.vertical.snap-right .item:hover { transform: translateX(-8px) scale(1.18); }
   body.vertical.snap-right .item:active { transform: translateX(-6px) scale(1.1); }
   /* 竖排窗口只有 100px 宽，自带 tooltip 放不下会被裁，改用系统 title 提示 */
-  body.vertical .item::after { display: none; }
 </style>
 </head>
 <body>
@@ -310,8 +285,8 @@
         const r = el.getBoundingClientRect();
         const cx = (window.screenX || 0) + r.left + r.width / 2;
         const cy = (window.screenY || 0) + r.top + r.height / 2;
-        window.dockpad.showPreview(app.path, cx, cy);
-      }, 420);
+        window.dockpad.showPreview(app.path, app.name || el.dataset.name || "", cx, cy);
+      }, 260);
     });
     el.addEventListener('mouseleave', () => {
       clearTimeout(hoverTimer);
@@ -378,10 +353,12 @@
   // ---- 贴边吸附：横排 / 竖排切换 ----
   let vertical = false;
 
-  // 竖排窗口只有 100px 宽，自带 tooltip 会被窗口裁掉，改用系统 title
+  // 名字显示策略：预览开着时名字在预览卡片顶部（跟着窗口浮在 Dock 之上，不会被裁）；
+  // 关掉预览就只能靠系统 tooltip —— 窗口只有图标那么高，自绘气泡一定放不下。
+  let previewOn = true;
   function syncTitles() {
     document.querySelectorAll('.item').forEach((el) => {
-      if (vertical && el.dataset.name) el.title = el.dataset.name;
+      if (!previewOn && el.dataset.name) el.title = el.dataset.name;
       else el.removeAttribute('title');
     });
   }
@@ -437,6 +414,11 @@
     const btnRgb = hexToRgbStr(s.dockBtnColor);
     if (btnRgb) root.setProperty('--dock-btn-rgb', btnRgb);
     root.setProperty('--icon-size', (s.iconSize || 50) + 'px');
+    // 预览开关会影响名字显示方式：开着用预览卡片，关掉退回系统 tooltip
+    if (s.hoverPreview !== previewOn) {
+      previewOn = !!s.hoverPreview;
+      syncTitles();
+    }
     // 图标尺寸变了，条的高度也跟着变，竖排窗口要重新贴合内容
     if (vertical) reportSize();
   }

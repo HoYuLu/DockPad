@@ -13,16 +13,33 @@
   #card {
     width: 100%;
     height: 100%;
-    padding: 8px;
+    padding: 8px 10px;
     border-radius: 13px;
     background: rgba(24, 24, 28, 0.92);
     border: 1px solid rgba(255, 255, 255, 0.16);
     box-shadow: 0 12px 34px rgba(0, 0, 0, 0.52);
     display: flex;
+    flex-direction: column;
     align-items: center;
-    justify-content: center;
+    justify-content: flex-start;
+    gap: 6px;
   }
+  /* 应用名：放在卡片顶部，跟着窗口一起浮在 Dock 之上，不会被窗口边界裁掉 */
+  #name {
+    flex: 0 0 auto;
+    max-width: 100%;
+    font-size: 12px;
+    line-height: 1.25;
+    color: rgba(255, 255, 255, 0.92);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    text-align: center;
+  }
+  #name:empty { display: none; }
   #shot {
+    flex: 1 1 auto;
+    min-height: 0;
     max-width: 100%;
     max-height: 100%;
     object-fit: contain;
@@ -30,13 +47,26 @@
     display: block;
   }
   #shot[src=""] { visibility: hidden; }
+  /* 没有缩略图时收成一条只有名字的小卡片 */
+  body.no-shot #shot { display: none; }
+  body.no-shot #card { justify-content: center; }
 </style>
 </head>
 <body>
-  <div id="card"><img id="shot" alt=""></div>
+  <div id="card">
+    <div id="name"></div>
+    <img id="shot" alt="">
+  </div>
   <script>
-    window.dockpad.onPreviewSrc((src) => {
-      document.getElementById('shot').src = src || '';
+    window.dockpad.onPreviewSrc((p) => {
+      const src = typeof p === 'string' ? p : (p && p.src) || '';
+      const name = typeof p === 'string' ? '' : (p && p.name) || '';
+      const nameEl = document.getElementById('name');
+      nameEl.textContent = name;
+      const shot = document.getElementById('shot');
+      if (src) shot.setAttribute('src', src);
+      else shot.removeAttribute('src');
+      document.body.classList.toggle('no-shot', !src);
     });
   </script>
 </body>

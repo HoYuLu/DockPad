@@ -675,21 +675,25 @@ ipcMain.handle('save-dock-order', (event, paths) => {
 
 ipcMain.handle('window-thumb', (event, targetPath) => windowThumbFor(targetPath))
 
-ipcMain.handle('show-preview', async (event, targetPath, anchorX, anchorY) => {
+ipcMain.handle('show-preview', async (event, targetPath, appName, anchorX, anchorY) => {
   if (!settings.get().hoverPreview) return false
   if (!dockWin || dockWin.isDestroyed()) return false
 
   const url = await windowThumbFor(targetPath)
-  if (!url) {
-    if (previewWin && !previewWin.isDestroyed()) previewWin.hide()
-    schedulePreviewIdleClose()
-    return false
-  }
+  // 截图失败也照样弹：只显示名字（有个别窗口抓不到缩略图）
 
   ensurePreview()
   if (!previewWin || previewWin.isDestroyed()) return false
   await previewReady
   if (!previewWin || previewWin.isDestroyed()) return false
+
+  // 有缩略图时用大卡片；只有名字时按文字长度收成一条小卡片
+  const label = String(appName || '')
+  const chars = Array.from(label).length
+  const W = url ? 380 : Math.min(380, Math.max(116, chars * 14 + 30))
+  const H = url ? 252 : 58
+  const cur = previewWin.getBounds()
+  if (cur.width !== W || cur.height !== H) previewWin.setBounds({ x: cur.x, y: cur.y, width: W, height: H })
 
   // 一律相对 Dock 窗口定位：以前横排写死「屏幕底部往上 100px」，
   // 结果把 Dock 拖到别处后预览框还留在原地
@@ -712,7 +716,7 @@ ipcMain.handle('show-preview', async (event, targetPath, anchorX, anchorY) => {
   y = Math.round(Math.max(area.y + 8, Math.min(y, area.y + area.height - b.height - 8)))
 
   previewWin.setPosition(x, y)
-  previewWin.webContents.send('preview-src', url)
+  previewWin.webContents.send('preview-src', { src: url || '', name: String(appName || '') })
   previewWin.showInactive()
   return true
 })
@@ -1656,21 +1660,29 @@ function refreshTrayMenu() {
 }
 
 function makeTray() {
-  const size = 32
-  const buf = Buffer.alloc(size * size * 4)
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const i = (y * size + x) * 4
-      const dx = x - size / 2 + 0.5
-      const dy = y - size / 2 + 0.5
-      const inside = dx * dx + dy * dy < (size / 2 - 2) * (size / 2 - 2)
-      buf[i] = inside ? 58 : 0
-      buf[i + 1] = inside ? 58 : 0
-      buf[i + 2] = inside ? 62 : 0
-      buf[i + 3] = inside ? 255 : 0
+  // 托盘用应用自己的图标（icon.ico 里有 16~256 全套尺寸，缩到 32 更清晰）
+  let img = nativeImage.createFromPath(path.join(__dirname, 'icon.ico'))
+  if (!img.isEmpty()) {
+    const s = img.getSize()
+    if (s.width > 32) img = img.resize({ width: 32, height: 32, quality: 'best' })
+  } else {
+    // 兜底：以前那个灰圆点，图标文件缺失时才用
+    const size = 32
+    const buf = Buffer.alloc(size * size * 4)
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const i = (y * size + x) * 4
+        const dx = x - size / 2 + 0.5
+        const dy = y - size / 2 + 0.5
+        const inside = dx * dx + dy * dy < (size / 2 - 2) * (size / 2 - 2)
+        buf[i] = inside ? 58 : 0
+        buf[i + 1] = inside ? 58 : 0
+        buf[i + 2] = inside ? 62 : 0
+        buf[i + 3] = inside ? 255 : 0
+      }
     }
+    img = nativeImage.createFromBuffer(buf, { width: size, height: size })
   }
-  const img = nativeImage.createFromBuffer(buf, { width: size, height: size })
   tray = new Tray(img)
   tray.setToolTip('DockPad · ' + getLibraryInfo().apps + ' 个应用')
   tray.setContextMenu(Menu.buildFromTemplate(buildTrayTemplate()))
