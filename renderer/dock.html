@@ -201,7 +201,7 @@
     <div id="grip" title="按住这里拖动 Dock"></div>
     <div id="apps"></div>
     <div class="sep"></div>
-    <div class="item" id="deskBtn" data-name="隐藏桌面图标" title="显示 / 隐藏桌面图标">
+    <div class="item" id="deskBtn" data-name="显示 / 隐藏桌面图标">
       <!-- 眼睛：一眼看出这是「显示/隐藏」开关，隐藏时加一道斜杠 -->
       <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.8"
            stroke-linecap="round" stroke-linejoin="round">
@@ -210,7 +210,7 @@
         <path class="slash" d="M4.6 19.4 19.4 4.6"/>
       </svg>
     </div>
-    <div class="item" id="pcBtn" data-name="此电脑" title="打开此电脑">
+    <div class="item" id="pcBtn" data-name="打开此电脑">
       <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.7"
            stroke-linecap="round" stroke-linejoin="round">
         <rect x="1.9" y="5" width="13" height="8.6" rx="1.5"/>
@@ -219,14 +219,14 @@
         <path d="M17.9 7.8h1.7"/>
       </svg>
     </div>
-    <div class="item" id="taskBtn" data-name="任务管理器" title="打开任务管理器">
+    <div class="item" id="taskBtn" data-name="打开任务管理器">
       <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.25"
            stroke-linecap="round" stroke-linejoin="round">
         <rect x="4.8" y="6" width="14.4" height="12" rx="1.9"/>
         <path d="M7.5 14.3l2.2-2.9 2 1.7 2-3.1 2.1 2.7"/>
       </svg>
     </div>
-    <div class="item" id="gridBtn" data-name="全部应用" title="打开全部应用面板">
+    <div class="item" id="gridBtn" data-name="打开全部应用面板">
       <svg viewBox="0 0 24 24" fill="none" stroke="#ffffff" stroke-width="1.9"
            stroke-linecap="round" stroke-linejoin="round">
         <rect x="3" y="3" width="7" height="7" rx="1.6"/>
@@ -285,7 +285,7 @@
         const r = el.getBoundingClientRect();
         const cx = (window.screenX || 0) + r.left + r.width / 2;
         const cy = (window.screenY || 0) + r.top + r.height / 2;
-        window.dockpad.showPreview(app.path, app.name || el.dataset.name || "", cx, cy);
+        const nm = app.name || el.dataset.name || ""; window.dockpad.showPreview(app.path, nm, cx, cy, measureLabel(nm));
       }, 260);
     });
     el.addEventListener('mouseleave', () => {
@@ -349,6 +349,13 @@
     if (!document.hidden) refreshRunning();
   }, 4000);
   window.addEventListener('focus', refreshRunning);
+
+  // 提示框宽度按真实文字量（英文名比中文窄很多，按字数估会左右多出黑边）
+  const _measureCtx = document.createElement('canvas').getContext('2d');
+  _measureCtx.font = '12px "Segoe UI", "Microsoft YaHei", system-ui, sans-serif';
+  function measureLabel(text) {
+    try { return Math.ceil(_measureCtx.measureText(String(text || '')).width) } catch (e) { return 0 }
+  }
 
   // ---- 贴边吸附：横排 / 竖排切换 ----
   let vertical = false;
@@ -496,6 +503,29 @@
   document.getElementById('taskBtn').addEventListener('click', (e) => {
     e.stopPropagation();
     window.dockpad.launch('C:\\Windows\\System32\\Taskmgr.exe');
+  });
+
+  // 右侧四个快捷按钮的悬停提示：和左边应用图标用同一个黑框气泡
+  // （之前用的是系统 title，样式和图标那边的提示不一致）
+  ;['deskBtn', 'pcBtn', 'taskBtn', 'gridBtn'].forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    let tipTimer = null;
+    el.addEventListener('mouseenter', () => {
+      const label = el.dataset.name || '';
+      if (!label) return;
+      clearTimeout(tipTimer);
+      tipTimer = setTimeout(() => {
+        const r = el.getBoundingClientRect();
+        const cx = (window.screenX || 0) + r.left + r.width / 2;
+        const cy = (window.screenY || 0) + r.top + r.height / 2;
+        window.dockpad.showNameTip(label, cx, cy, measureLabel(label));
+      }, 180);
+    });
+    el.addEventListener('mouseleave', () => {
+      clearTimeout(tipTimer);
+      window.dockpad.hidePreview();
+    });
   });
 
   window.addEventListener('resize', reportGridAnchor);

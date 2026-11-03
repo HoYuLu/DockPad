@@ -675,13 +675,11 @@ ipcMain.handle('save-dock-order', (event, paths) => {
 
 ipcMain.handle('window-thumb', (event, targetPath) => windowThumbFor(targetPath))
 
-ipcMain.handle('show-preview', async (event, targetPath, appName, anchorX, anchorY) => {
-  if (!settings.get().hoverPreview) return false
+// 气泡本体：url 有值就是「名字 + 缩略图」的大卡片，没值就是一行字的小黑框。
+// show-preview（应用图标）和 show-name-tip（Dock 上四个快捷按钮）共用它，
+// 这样两边的提示观感完全一致。
+async function showTipCard(url, label, anchorX, anchorY, textW) {
   if (!dockWin || dockWin.isDestroyed()) return false
-
-  const url = await windowThumbFor(targetPath)
-  // 截图失败也照样弹：只显示名字（有个别窗口抓不到缩略图）
-
   ensurePreview()
   if (!previewWin || previewWin.isDestroyed()) return false
   await previewReady
@@ -689,9 +687,13 @@ ipcMain.handle('show-preview', async (event, targetPath, appName, anchorX, ancho
 
   // 有缩略图时用大卡片；只有名字时做成和原来一样的紧凑小黑框（高度只够一行字），
   // 并且离 Dock 顶边留 16px，免得鼠标箭头压到框上
-  const label = String(appName || '')
-  const chars = Array.from(label).length
-  const W = url ? 380 : Math.min(320, Math.max(64, chars * 13 + 24))
+  const text = String(label || '')
+  const chars = Array.from(text).length
+  // 渲染进程能用 canvas 量出真实文字宽度（英文名比中文窄很多，按字数估会左右多出黑边）；
+  // 拿不到就退回按字数估：中文字约 13px，英文约 7px
+  const measured = Math.ceil(Number(textW) || 0)
+  const est = Array.from(text).reduce((sum, ch) => sum + (ch.charCodeAt(0) > 255 ? 13 : 7), 0)
+  const W = url ? 380 : Math.min(320, Math.max(64, (measured || est) + 22))
   const H = url ? 252 : 30
   const GAP = url ? 8 : 16
   const cur = previewWin.getBounds()
@@ -718,9 +720,22 @@ ipcMain.handle('show-preview', async (event, targetPath, appName, anchorX, ancho
   y = Math.round(Math.max(area.y + 8, Math.min(y, area.y + area.height - b.height - 8)))
 
   previewWin.setPosition(x, y)
-  previewWin.webContents.send('preview-src', { src: url || '', name: String(appName || '') })
+  previewWin.webContents.send('preview-src', { src: url || '', name: text })
   previewWin.showInactive()
   return true
+}
+
+ipcMain.handle('show-preview', async (event, targetPath, appName, anchorX, anchorY, textW) => {
+  if (!settings.get().hoverPreview) return false
+  if (!dockWin || dockWin.isDestroyed()) return false
+  // 截图失败也照样弹：只显示名字（有个别窗口抓不到缩略图）
+  const url = await windowThumbFor(targetPath)
+  return showTipCard(url, appName, anchorX, anchorY, textW)
+})
+
+// Dock 上四个快捷按钮的提示：纯文字，不受「悬停窗口预览」开关影响
+ipcMain.handle('show-name-tip', async (event, label, anchorX, anchorY, textW) => {
+  return showTipCard('', label, anchorX, anchorY, textW)
 })
 
 ipcMain.on('hide-preview', () => {
