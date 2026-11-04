@@ -4,6 +4,7 @@ const path = require('path')
 const fs = require('fs')
 const os = require('os')
 const library = require('./library')
+const { iconImageFromExe } = require('./peicon')
 
 // 应用清单由 library.js 自己维护（%APPDATA%\dockpad\library.json）。
 // 桌面上的「常用」文件夹只在首次迁移时当数据源，之后不再扫描、也不再往里移动文件。
@@ -216,6 +217,16 @@ async function iconFor(target) {
   if (IMAGE_EXTS.includes(ext)) {
     const direct = iconFromImageFile(target)
     if (direct) return direct
+  }
+  // 先自己解析 exe 的 PE 资源。getFileIcon 只按 32×32 问系统，遇到「只有一张
+  // 256px PNG 图标」的程序（很多 Electron 应用）会返回通用图标。
+  if (ext === '.exe' || ext === '.dll') {
+    try {
+      const pe = iconImageFromExe(target)
+      if (pe && !pe.isEmpty()) return shrinkIcon(pe)
+    } catch (e) {
+      /* 解析失败继续走系统接口 */
+    }
   }
   try {
     const img = await app.getFileIcon(target, { size: 'large' })
