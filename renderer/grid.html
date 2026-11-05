@@ -24,6 +24,8 @@
        用 clip-path 兜住，边框改成内阴影免得被裁掉一半 */
     border-radius: 18px;
     clip-path: inset(0 round 18px);
+    /* 底色几乎全透明时不要模糊：透明窗口里 backdrop-filter 采样不到背景，
+       会连整块面板一起画成黑的（拖动时的虚线范围发黑就是这个） */
     box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.1);
     display: flex;
     flex-direction: column;
@@ -514,6 +516,8 @@
   }
   .app:hover .nm { color: #fff; text-shadow: 0 1px 3px rgba(0,0,0,1), 0 0 4px rgba(0,0,0,0.95), 0 0 12px rgba(0,0,0,0.85); }
   .app:hover .nm { background: rgba(0, 0, 0, 0.52); }
+
+  body.no-blur #veil { backdrop-filter: none; -webkit-backdrop-filter: none; }
 
   #empty {
     margin-top: 90px;
@@ -1462,7 +1466,10 @@
     const root = document.documentElement.style;
     // 注意：不能用 `Number(x) || 1`——0 是合法值（全透明），|| 会把它变成 1
     const a = Number(s.panelOpacity);
-    root.setProperty('--panel-alpha', String(Number.isFinite(a) ? a : 1));
+    const alpha = Number.isFinite(a) ? a : 1;
+    root.setProperty('--panel-alpha', String(alpha));
+    // 全透明就关掉模糊，否则整块面板（含拖动时的虚线范围）会变成黑的
+    document.body.classList.toggle('no-blur', alpha < 0.05);
     root.setProperty('--grid-icon', (s.gridIconSize || 54) + 'px');
 
     // 底色：转成 rgb 三元组，透明度仍然由 --panel-alpha 单独控制
