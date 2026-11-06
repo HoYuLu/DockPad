@@ -1835,11 +1835,15 @@ $bf = '__BOUNDSFILE__'
 $pp = __PARENTPID__
 
 function Test-FullScreen {
+  $script:FsWhy = ''
   # 主判据：Windows 官方的"用户通知状态"（任务栏/通知中心判断全屏应用用的同一套 API）
   # 2=全屏应用(F11等) 3=全屏D3D游戏 7=全屏商店应用
   $state = 0
   try { [FsProbe]::SHQueryUserNotificationState([ref]$state) | Out-Null } catch {}
-  if (($state -eq 2) -or ($state -eq 3) -or ($state -eq 7)) { return $true }
+  if (($state -eq 2) -or ($state -eq 3) -or ($state -eq 7)) {
+    $script:FsWhy = 'quns=' + $state
+    return $true
+  }
 
   # 兜底：前台窗口铺满整屏且没有标题栏。有标题栏的一律当普通窗口——
   # 任务栏自动隐藏时任何最大化窗口都会铺满屏幕，不能算全屏
@@ -1854,7 +1858,10 @@ function Test-FullScreen {
   if (-not [FsProbe]::GetWindowRect($h, [ref]$r)) { return $false }
   foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
     $b = $s.Bounds
-    if (($r.Left -le $b.Left) -and ($r.Top -le $b.Top) -and ($r.Right -ge $b.Right) -and ($r.Bottom -ge $b.Bottom)) { return $true }
+    if (($r.Left -le $b.Left) -and ($r.Top -le $b.Top) -and ($r.Right -ge $b.Right) -and ($r.Bottom -ge $b.Bottom)) {
+      $script:FsWhy = 'rect cls=' + $cls + ' st=' + $style
+      return $true
+    }
   }
   return $false
 }
@@ -1888,8 +1895,9 @@ while ($true) {
   } catch { exit }
 
   $fs = 0
-  try { if (Test-FullScreen) { $fs = 1 } } catch {}
-  if ($fs -ne $fsLast) { Write-Output ('FS ' + $fs); $fsLast = $fs }
+  $why = ''
+  try { if (Test-FullScreen) { $fs = 1; $why = $script:FsWhy } } catch {}
+  if ($fs -ne $fsLast) { Write-Output ('FS ' + $fs + ' ' + $why); $fsLast = $fs }
   if ($fs -eq 1) { $hits = 0; continue }
 
   $raw = ''
@@ -2038,10 +2046,11 @@ function startSurfaceWatchdog() {
         } else if (line.indexOf('FS ') === 0) {
           // 探针上报前台是否被全屏应用占着。全屏期间一个窗口动作都不能做，
           // 否则 Dock / 面板 / 重启都会从游戏画面上冒出来
-          const v = line.slice(3).trim() === '1'
+          const rest = line.slice(3).trim()
+          const v = rest.charAt(0) === '1'
           if (v !== surfaceFullScreen) {
             surfaceFullScreen = v
-            logBoot('fullscreen=' + (v ? 1 : 0))
+            logBoot('fullscreen=' + rest)
             writeSurfaceBounds()
             if (!v) {
               // 退回桌面：游戏期间被打碎的表面在这里一次性补修
