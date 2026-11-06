@@ -1655,7 +1655,7 @@ function buildTrayTemplate() {
     { label: '扫描文件夹添加应用…', click: () => runScanDialog() },
     { label: '设置…', click: () => createSettings() },
     { label: '刷新图标', click: () => { invalidate(); if (gridWin && !gridWin.isDestroyed()) gridWin.webContents.send('apps-reset'); if (dockWin && !dockWin.isDestroyed()) dockWin.webContents.send('apps-reset') } },
-    { label: '修复黑屏（透明失效）', click: () => { surfHealState.fails = 0; healAllSurfaces() } },
+    { label: '修复黑屏（透明失效）', click: () => { surfHealState.fails = 0; healAllSurfaces(true) } },
     { type: 'separator' },
     {
       label: '开机自启',
@@ -1793,24 +1793,105 @@ app.on('window-all-closed', (e) => {
 // Windows 上 Electron 透明窗口的已知缺陷：全屏游戏（WeGame 启动三角洲等）、
 // 分辨率切换等事件会让 DWM 重建合成表面，ARGB 分层窗口可能恢复不回来，
 // 整个窗口变纯黑（连本该全透明的部分也是黑的）。
-// 方案：常驻 PowerShell 探针每 2.5s 采样 Dock 窗口左上角一个像素（正常时
-// 全透明显壁纸）。若该像素变成近纯黑、且与窗口上方 10px 的壁纸参考点差异
-// 明显，判定表面损坏：先做无损修复（尺寸+1 再还原，强制重建表面），连着
-// 3 次仍黑就整进程重启兜底（5 分钟内最多一次）。探针每轮检查父进程是否
-// 还活着，主进程退出后自动消亡，不留孤儿进程。
+// ---------- 透明表面自愈 ----------
+// Windows 上 Electron 透明窗口的已知缺陷：全屏游戏（WeGame 启动三角洲等）、
+// 分辨率切换等事件会让 DWM 重建合成表面，ARGB 分层窗口可能恢复不回来，
+// 整个窗口变纯黑（连本该全透明的部分也是黑的）。
+// 方案：常驻探针进程每 2.5s 采样 Dock 窗口左右两个上角的像素（正常时全透明显壁纸）。
+// 判定要求严格：两个角都近纯黑、且都与各自上方 12px 的壁纸参考差异明显、且连续
+// 两轮都命中，才认为表面损坏。损坏后先做无损修复（尺寸+1 再还原，强制重建表面），
+// 60 秒内没有新报就清零计数；连续 3 次修复无效才整进程重启兜底（5 分钟最多一次）。
+//
+// 关键：全屏应用（游戏）在前台时，探针只上报 FS 状态，主进程完全不动窗口——
+// 否则 setBounds / setBackgroundColor / 重启窗口都会让 Dock 从游戏画面上冒出来。
+// 退出全屏那一刻再补一次修复，游戏里绝不会闪。
 let surfWatchProc = null
+let surfRestartTries = 0
+let surfaceBoundsTimer = null
+let surfaceFullScreen = false
 let surfHealState = { lastAt: 0, fails: 0, relaunchedAt: 0 }
+let surfSettleTimer = null
 
 const SURF_PS1 = `
 $ErrorActionPreference = 'SilentlyContinue'
 Add-Type -AssemblyName System.Drawing
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -TypeDefinition @'
+using System;
+using System.Runtime.InteropServices;
+using System.Text;
+public class FsProbe {
+  [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+  [DllImport("user32.dll")] public static extern IntPtr GetShellWindow();
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out RECT r);
+  [DllImport("user32.dll")] public static extern int GetClassName(IntPtr h, StringBuilder s, int n);
+  [DllImport("user32.dll")] public static extern int GetWindowLong(IntPtr h, int idx);
+  [DllImport("shell32.dll")] public static extern int SHQueryUserNotificationState(out int state);
+  [StructLayout(LayoutKind.Sequential)] public struct RECT { public int Left; public int Top; public int Right; public int Bottom; }
+  public static string Cls(IntPtr h) { StringBuilder sb = new StringBuilder(256); GetClassName(h, sb, 256); return sb.ToString(); }
+}
+'@
 $bf = '__BOUNDSFILE__'
 $pp = __PARENTPID__
+
+function Test-FullScreen {
+  # 主判据：Windows 官方的"用户通知状态"（任务栏/通知中心判断全屏应用用的同一套 API）
+  # 2=全屏应用(F11等) 3=全屏D3D游戏 7=全屏商店应用
+  $state = 0
+  try { [FsProbe]::SHQueryUserNotificationState([ref]$state) | Out-Null } catch {}
+  if (($state -eq 2) -or ($state -eq 3) -or ($state -eq 7)) { return $true }
+
+  # 兜底：前台窗口铺满整屏且没有标题栏。有标题栏的一律当普通窗口——
+  # 任务栏自动隐藏时任何最大化窗口都会铺满屏幕，不能算全屏
+  $h = [FsProbe]::GetForegroundWindow()
+  if ($h -eq [IntPtr]::Zero) { return $false }
+  if ($h -eq [FsProbe]::GetShellWindow()) { return $false }
+  $cls = [FsProbe]::Cls($h)
+  if (($cls -eq 'Progman') -or ($cls -eq 'WorkerW') -or ($cls -eq 'Shell_TrayWnd')) { return $false }
+  $style = [FsProbe]::GetWindowLong($h, -16)
+  if (($style -band 0x00C00000) -ne 0) { return $false }
+  $r = [FsProbe+RECT]::new()
+  if (-not [FsProbe]::GetWindowRect($h, [ref]$r)) { return $false }
+  foreach ($s in [System.Windows.Forms.Screen]::AllScreens) {
+    $b = $s.Bounds
+    if (($r.Left -le $b.Left) -and ($r.Top -le $b.Top) -and ($r.Right -ge $b.Right) -and ($r.Bottom -ge $b.Bottom)) { return $true }
+  }
+  return $false
+}
+
+function Sample-Pixel($sx, $sy) {
+  $bmp = New-Object System.Drawing.Bitmap 1,1
+  $g = [System.Drawing.Graphics]::FromImage($bmp)
+  $g.CopyFromScreen($sx, $sy, 0, 0, (New-Object System.Drawing.Size 1,1))
+  $c = $bmp.GetPixel(0,0)
+  $g.Dispose(); $bmp.Dispose()
+  return $c
+}
+
+function Test-Black($c) {
+  if (($c.R -lt 12) -and ($c.G -lt 12) -and ($c.B -lt 12)) { return $true }
+  return $false
+}
+
+function Test-Diff($c1, $c2) {
+  $d = [Math]::Abs($c1.R-$c2.R) + [Math]::Abs($c1.G-$c2.G) + [Math]::Abs($c1.B-$c2.B)
+  if ($d -gt 70) { return $true }
+  return $false
+}
+
+$fsLast = -1
+$hits = 0
 while ($true) {
   Start-Sleep -Milliseconds 2500
   try {
     if (-not (Get-Process -Id $pp -ErrorAction SilentlyContinue)) { exit }
   } catch { exit }
+
+  $fs = 0
+  try { if (Test-FullScreen) { $fs = 1 } } catch {}
+  if ($fs -ne $fsLast) { Write-Output ('FS ' + $fs); $fsLast = $fs }
+  if ($fs -eq 1) { $hits = 0; continue }
+
   $raw = ''
   try { $raw = (Get-Content -Raw -ErrorAction SilentlyContinue $bf) } catch {}
   if (-not $raw) { continue }
@@ -1819,21 +1900,21 @@ while ($true) {
   $p = $raw -split ' '
   if ($p.Count -lt 4) { continue }
   $x = [int]$p[0]; $y = [int]$p[1]; $w = [int]$p[2]; $h = [int]$p[3]
-  $cx = $x + 3; $cy = $y + 3
-  if ($w -gt 400) { $cx = $x + 8 }
+  $lx = $x + 6; $rx = $x + $w - 7; $cy = $y + 3
   try {
-    $b1 = New-Object System.Drawing.Bitmap 1,1
-    $g1 = [System.Drawing.Graphics]::FromImage($b1)
-    $g1.CopyFromScreen($cx, $cy, 0, 0, (New-Object System.Drawing.Size 1,1))
-    $c1 = $b1.GetPixel(0,0)
-    $b2 = New-Object System.Drawing.Bitmap 1,1
-    $g2 = [System.Drawing.Graphics]::FromImage($b2)
-    $g2.CopyFromScreen($cx, ($y - 10), 0, 0, (New-Object System.Drawing.Size 1,1))
-    $c2 = $b2.GetPixel(0,0)
-    $g1.Dispose(); $g2.Dispose(); $b1.Dispose(); $b2.Dispose()
-    $diff = [Math]::Abs($c1.R-$c2.R) + [Math]::Abs($c1.G-$c2.G) + [Math]::Abs($c1.B-$c2.B)
-    if (($c1.R -lt 14) -and ($c1.G -lt 14) -and ($c1.B -lt 14) -and ($diff -gt 60)) {
-      Write-Output ('BROKEN ' + $diff)
+    $l1 = Sample-Pixel $lx $cy
+    $l2 = Sample-Pixel $lx ($y - 12)
+    $r1 = Sample-Pixel $rx $cy
+    $r2 = Sample-Pixel $rx ($y - 12)
+    $bad = (Test-Black $l1) -and (Test-Black $r1) -and (Test-Diff $l1 $l2) -and (Test-Diff $r1 $r2)
+    if ($bad) {
+      $hits++
+      if ($hits -ge 2) {
+        Write-Output ('BROKEN hit=' + $hits)
+        $hits = 0
+      }
+    } else {
+      $hits = 0
     }
   } catch {}
 }
@@ -1843,10 +1924,11 @@ function surfaceBoundsFile() {
   return path.join(app.getPath('appData'), 'dockpad', 'surface-bounds.txt')
 }
 
-// 把 Dock 窗口的物理像素坐标写给探针；网格面板开着或 Dock 隐藏时暂停检测
+// 把 Dock 窗口的物理像素坐标写给探针；全屏应用在前台、网格面板开着或 Dock 隐藏时暂停检测
 function writeSurfaceBounds() {
   try {
-    if (!dockWin || dockWin.isDestroyed() || !dockWin.isVisible()
+    if (surfaceFullScreen
+      || !dockWin || dockWin.isDestroyed() || !dockWin.isVisible()
       || (gridWin && !gridWin.isDestroyed() && gridWin.isVisible())) {
       fs.writeFileSync(surfaceBoundsFile(), 'hidden')
       return
@@ -1875,20 +1957,32 @@ function healWindowSurface(win) {
   try { win.webContents.invalidate() } catch (e) { /* ignore */ }
 }
 
-function healAllSurfaces() {
+// 全屏应用在前台时不碰任何窗口（改了就会从游戏画面上冒出来）；force 只给托盘手动修复用
+function healAllSurfaces(force) {
+  if (surfaceFullScreen && !force) return
   healWindowSurface(dockWin)
   healWindowSurface(gridWin)
   healWindowSurface(previewWin)
 }
 
 function onSurfaceBroken() {
+  if (surfaceFullScreen) {
+    logBoot('surface-broken skipped (fullscreen)')
+    return
+  }
   const now = Date.now()
-  logBoot('surface-broken fails=' + surfHealState.fails)
   if (now - surfHealState.lastAt < 3000) return
   surfHealState.lastAt = now
   surfHealState.fails++
+  logBoot('surface-broken fails=' + surfHealState.fails)
   healAllSurfaces()
-  // 修了 3 轮（约 9 秒）还是黑：整进程重启兜底，5 分钟内最多一次
+  // 60 秒内没有新报就当作修好了：fails 变成「连续失败」而不是累计误报
+  if (surfSettleTimer) clearTimeout(surfSettleTimer)
+  surfSettleTimer = setTimeout(() => {
+    surfHealState.fails = 0
+    surfSettleTimer = null
+  }, 60000)
+  // 连续 3 次修复无效才重启兜底，5 分钟内最多一次
   if (surfHealState.fails >= 3 && now - surfHealState.relaunchedAt > 5 * 60 * 1000) {
     surfHealState.relaunchedAt = now
     surfHealState.fails = 0
@@ -1939,15 +2033,46 @@ function startSurfaceWatchdog() {
       while ((i = buf.indexOf('\n')) >= 0) {
         const line = buf.slice(0, i).trim()
         buf = buf.slice(i + 1)
-        if (line.indexOf('BROKEN') === 0) onSurfaceBroken()
+        if (line.indexOf('BROKEN') === 0) {
+          onSurfaceBroken()
+        } else if (line.indexOf('FS ') === 0) {
+          // 探针上报前台是否被全屏应用占着。全屏期间一个窗口动作都不能做，
+          // 否则 Dock / 面板 / 重启都会从游戏画面上冒出来
+          const v = line.slice(3).trim() === '1'
+          if (v !== surfaceFullScreen) {
+            surfaceFullScreen = v
+            logBoot('fullscreen=' + (v ? 1 : 0))
+            writeSurfaceBounds()
+            if (!v) {
+              // 退回桌面：游戏期间被打碎的表面在这里一次性补修
+              setTimeout(() => { if (!surfaceFullScreen) healAllSurfaces() }, 900)
+            }
+          }
+        }
       }
     })
-    surfWatchProc.on('exit', () => { surfWatchProc = null })
+    surfWatchProc.on('exit', () => {
+      surfWatchProc = null
+      // 探针没了就别再相信"全屏中"这个状态，免得退回桌面后永远不检测
+      if (surfaceFullScreen) {
+        surfaceFullScreen = false
+        writeSurfaceBounds()
+      }
+      // 异常退出后 10 秒补一次，最多连续重试 3 次（防止死循环刷进程）
+      if (surfRestartTries < 3) {
+        surfRestartTries++
+        setTimeout(() => { if (!surfWatchProc) startSurfaceWatchdog() }, 10000)
+      }
+    })
+    // 稳定跑满 1 分钟才算这轮启动成功，重置重试计数
+    setTimeout(() => { if (surfWatchProc) surfRestartTries = 0 }, 60000)
   } catch (e) {
     surfWatchProc = null
   }
-  // 拖动 / 自动隐藏 / 分辨率变化都会改变窗口矩形，低频同步给探针
-  setInterval(writeSurfaceBounds, 800)
+  // 拖动 / 自动隐藏 / 分辨率变化都会改变窗口矩形，低频同步给探针（只建一个定时器）
+  if (!surfaceBoundsTimer) {
+    surfaceBoundsTimer = setInterval(writeSurfaceBounds, 800)
+  }
   writeSurfaceBounds()
 }
 
