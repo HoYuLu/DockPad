@@ -10,8 +10,9 @@ const {
   dialog,
   Notification,
   globalShortcut,
+  powerMonitor,
 } = require('electron')
-const { execFile, execFileSync } = require('child_process')
+const { execFile, execFileSync, spawn } = require('child_process')
 const path = require('path')
 const fs = require('fs')
 const settings = require('./settings')
@@ -81,6 +82,15 @@ if (settings.get().lowGpu) {
 
 // 单实例锁：重复启动时直接退出，并把已有实例唤出来
 const singleInstance = app.requestSingleInstanceLock()
+// 临时启动日志：排查"启动即退出"用，定位后删除
+function logBoot(msg) {
+  try {
+    fs.appendFileSync(path.join(require('os').tmpdir(), 'dp-boot.log'), new Date().toISOString() + ' ' + msg + '\n')
+  } catch (e) { /* ignore */ }
+}
+try {
+  logBoot('boot pid=' + process.pid + ' lock=' + singleInstance)
+} catch (e) { /* ignore */ }
 
 // ---------- Dock 尺寸 / 贴边吸附状态 ----------
 const DOCK_H_W = 780 // 横排窗口宽
@@ -1024,6 +1034,8 @@ function showGrid(anchor) {
     'grid-opening',
     a ? { x: a.x, y: a.y, padR: pad.r, padB: pad.b, w: base.width, h: base.height } : null
   )
+  // 显示前先修一次透明表面（隐藏状态重建无闪烁）：全屏游戏打碎过表面的话，这里能直接救回来
+  healWindowSurface(gridWin)
   gridWin.show()
   gridWin.focus()
   // 兜底：动画事件没回来也要把透明边收掉
@@ -1643,6 +1655,7 @@ function buildTrayTemplate() {
     { label: '扫描文件夹添加应用…', click: () => runScanDialog() },
     { label: '设置…', click: () => createSettings() },
     { label: '刷新图标', click: () => { invalidate(); if (gridWin && !gridWin.isDestroyed()) gridWin.webContents.send('apps-reset'); if (dockWin && !dockWin.isDestroyed()) dockWin.webContents.send('apps-reset') } },
+    { label: '修复黑屏（透明失效）', click: () => { surfHealState.fails = 0; healAllSurfaces() } },
     { type: 'separator' },
     {
       label: '开机自启',
@@ -1730,11 +1743,17 @@ app.whenReady().then(() => {
   }
 
   makeTray()
+  logBoot('ready-ok')
   startAutoHideLoop()
+  startSurfaceWatchdog()
+  powerMonitor.on('resume', () => { healAllSurfaces() })
+  powerMonitor.on('unlock-screen', () => { healAllSurfaces() })
   registerShortcuts()
 
   // 分辨率/显示器变化时把 Dock 拉回可视范围；贴边的保持贴边，不覆盖用户拖拽的位置
   screen.on('display-metrics-changed', () => {
+    // 系统级显示事件正是透明表面被打碎的高发点，顺手修一次
+    setTimeout(healAllSurfaces, 400)
     if (!dockWin || dockWin.isDestroyed()) return
     const b = dockWin.getBounds()
     const area = screen.getDisplayMatching(b).workArea
@@ -1770,7 +1789,170 @@ app.on('window-all-closed', (e) => {
   e.preventDefault()
 })
 
-app.on('before-quit', () => {
+// ---------- 透明表面自愈 ----------
+// Windows 上 Electron 透明窗口的已知缺陷：全屏游戏（WeGame 启动三角洲等）、
+// 分辨率切换等事件会让 DWM 重建合成表面，ARGB 分层窗口可能恢复不回来，
+// 整个窗口变纯黑（连本该全透明的部分也是黑的）。
+// 方案：常驻 PowerShell 探针每 2.5s 采样 Dock 窗口左上角一个像素（正常时
+// 全透明显壁纸）。若该像素变成近纯黑、且与窗口上方 10px 的壁纸参考点差异
+// 明显，判定表面损坏：先做无损修复（尺寸+1 再还原，强制重建表面），连着
+// 3 次仍黑就整进程重启兜底（5 分钟内最多一次）。探针每轮检查父进程是否
+// 还活着，主进程退出后自动消亡，不留孤儿进程。
+let surfWatchProc = null
+let surfHealState = { lastAt: 0, fails: 0, relaunchedAt: 0 }
+
+const SURF_PS1 = `
+$ErrorActionPreference = 'SilentlyContinue'
+Add-Type -AssemblyName System.Drawing
+$bf = '__BOUNDSFILE__'
+$pp = __PARENTPID__
+while ($true) {
+  Start-Sleep -Milliseconds 2500
+  try {
+    if (-not (Get-Process -Id $pp -ErrorAction SilentlyContinue)) { exit }
+  } catch { exit }
+  $raw = ''
+  try { $raw = (Get-Content -Raw -ErrorAction SilentlyContinue $bf) } catch {}
+  if (-not $raw) { continue }
+  $raw = $raw.Trim()
+  if ($raw -eq 'hidden' -or $raw -eq '') { continue }
+  $p = $raw -split ' '
+  if ($p.Count -lt 4) { continue }
+  $x = [int]$p[0]; $y = [int]$p[1]; $w = [int]$p[2]; $h = [int]$p[3]
+  $cx = $x + 3; $cy = $y + 3
+  if ($w -gt 400) { $cx = $x + 8 }
+  try {
+    $b1 = New-Object System.Drawing.Bitmap 1,1
+    $g1 = [System.Drawing.Graphics]::FromImage($b1)
+    $g1.CopyFromScreen($cx, $cy, 0, 0, (New-Object System.Drawing.Size 1,1))
+    $c1 = $b1.GetPixel(0,0)
+    $b2 = New-Object System.Drawing.Bitmap 1,1
+    $g2 = [System.Drawing.Graphics]::FromImage($b2)
+    $g2.CopyFromScreen($cx, ($y - 10), 0, 0, (New-Object System.Drawing.Size 1,1))
+    $c2 = $b2.GetPixel(0,0)
+    $g1.Dispose(); $g2.Dispose(); $b1.Dispose(); $b2.Dispose()
+    $diff = [Math]::Abs($c1.R-$c2.R) + [Math]::Abs($c1.G-$c2.G) + [Math]::Abs($c1.B-$c2.B)
+    if (($c1.R -lt 14) -and ($c1.G -lt 14) -and ($c1.B -lt 14) -and ($diff -gt 60)) {
+      Write-Output ('BROKEN ' + $diff)
+    }
+  } catch {}
+}
+`
+
+function surfaceBoundsFile() {
+  return path.join(app.getPath('appData'), 'dockpad', 'surface-bounds.txt')
+}
+
+// 把 Dock 窗口的物理像素坐标写给探针；网格面板开着或 Dock 隐藏时暂停检测
+function writeSurfaceBounds() {
+  try {
+    if (!dockWin || dockWin.isDestroyed() || !dockWin.isVisible()
+      || (gridWin && !gridWin.isDestroyed() && gridWin.isVisible())) {
+      fs.writeFileSync(surfaceBoundsFile(), 'hidden')
+      return
+    }
+    const b = dockWin.getBounds()
+    const sf = screen.getDisplayMatching(b).scaleFactor || 1
+    fs.writeFileSync(
+      surfaceBoundsFile(),
+      [Math.round(b.x * sf), Math.round(b.y * sf), Math.round(b.width * sf), Math.round(b.height * sf)].join(' ')
+    )
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+function healWindowSurface(win) {
+  if (!win || win.isDestroyed()) return
+  try {
+    const b = win.getBounds()
+    win.setBounds({ x: b.x, y: b.y, width: b.width + 1, height: b.height + 1 })
+    win.setBounds(b)
+  } catch (e) {
+    /* ignore */
+  }
+  try { win.setBackgroundColor('#00000000') } catch (e) { /* ignore */ }
+  try { win.webContents.invalidate() } catch (e) { /* ignore */ }
+}
+
+function healAllSurfaces() {
+  healWindowSurface(dockWin)
+  healWindowSurface(gridWin)
+  healWindowSurface(previewWin)
+}
+
+function onSurfaceBroken() {
+  const now = Date.now()
+  logBoot('surface-broken fails=' + surfHealState.fails)
+  if (now - surfHealState.lastAt < 3000) return
+  surfHealState.lastAt = now
+  surfHealState.fails++
+  healAllSurfaces()
+  // 修了 3 轮（约 9 秒）还是黑：整进程重启兜底，5 分钟内最多一次
+  if (surfHealState.fails >= 3 && now - surfHealState.relaunchedAt > 5 * 60 * 1000) {
+    surfHealState.relaunchedAt = now
+    surfHealState.fails = 0
+    logBoot('relaunch-due-to-broken-surface')
+    app.relaunch()
+    try { app.quit() } catch (e) { /* ignore */ }
+    setTimeout(() => {
+      try { app.exit(0) } catch (e) { /* ignore */ }
+    }, 1500)
+  }
+}
+
+// 宿主环境里可能混着大小写不同的重复变量（PATH/Path、HTTP_PROXY/http_proxy），
+// PowerShell/.NET 子进程按不区分大小写建字典会直接崩（"已添加了具有相同键的项"）。
+// 给子进程发一份去重后的环境。
+function cleanChildEnv() {
+  const out = {}
+  const seen = new Set()
+  for (const k of Object.keys(process.env)) {
+    const lk = k.toLowerCase()
+    if (seen.has(lk)) continue
+    seen.add(lk)
+    out[k] = process.env[k]
+  }
+  return out
+}
+
+function startSurfaceWatchdog() {
+  if (surfWatchProc) return
+  try {
+    const dir = path.join(app.getPath('appData'), 'dockpad')
+    fs.mkdirSync(dir, { recursive: true })
+    const ps1 = path.join(dir, 'surface-watch.ps1')
+    fs.writeFileSync(
+      ps1,
+      SURF_PS1.replace('__BOUNDSFILE__', surfaceBoundsFile()).replace('__PARENTPID__', String(process.pid))
+    )
+    const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+    surfWatchProc = spawn(
+      psExe,
+      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1],
+      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: cleanChildEnv() }
+    )
+    let buf = ''
+    surfWatchProc.stdout.on('data', (d) => {
+      buf += String(d)
+      let i
+      while ((i = buf.indexOf('\n')) >= 0) {
+        const line = buf.slice(0, i).trim()
+        buf = buf.slice(i + 1)
+        if (line.indexOf('BROKEN') === 0) onSurfaceBroken()
+      }
+    })
+    surfWatchProc.on('exit', () => { surfWatchProc = null })
+  } catch (e) {
+    surfWatchProc = null
+  }
+  // 拖动 / 自动隐藏 / 分辨率变化都会改变窗口矩形，低频同步给探针
+  setInterval(writeSurfaceBounds, 800)
+  writeSurfaceBounds()
+}
+
+app.on('before-quit', (e) => {
+  logBoot('before-quit')
   if (tray) tray.destroy()
   try {
     globalShortcut.unregisterAll()
@@ -1778,4 +1960,7 @@ app.on('before-quit', () => {
     /* ignore */
   }
   if (autoHideTimer) clearInterval(autoHideTimer)
+  if (surfWatchProc) {
+    try { surfWatchProc.kill() } catch (e) { /* ignore */ }
+  }
 })
