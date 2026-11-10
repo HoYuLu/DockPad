@@ -110,10 +110,20 @@ function dockPosFile() {
 
 function loadDockPos() {
   try {
-    // 记事本/PowerShell 保存会带 UTF-8 BOM，JSON.parse 会直接抛错
+    // 记事本/脚本工具保存会带 UTF-8 BOM，JSON.parse 会直接抛错
     const raw = fs.readFileSync(dockPosFile(), 'utf8').replace(/^\uFEFF/, '')
     const p = JSON.parse(raw)
-    if (p && typeof p.x === 'number' && typeof p.y === 'number') return p
+    if (p && typeof p.x === 'number' && typeof p.y === 'number') {
+      // 兜底：坐标得落在某块屏幕上。历史坏值（例如显示切换中间态算出来的 0）会
+      // 让 Dock 每次启动都贴在屏幕顶边，检查不过就当作没保存过，回到默认底部居中
+      const ok = screen.getAllDisplays().some((d) => {
+        const a = d.bounds
+        return p.x + 40 >= a.x && p.x + 40 <= a.x + a.width
+          && p.y + 20 >= a.y && p.y + 20 <= a.y + a.height
+      })
+      if (ok) return p
+      logBoot('dockpos rejected ' + p.x + ',' + p.y)
+    }
   } catch (e) {
     /* ignore */
   }
@@ -126,6 +136,8 @@ function saveDockPos(x, y, orient) {
       dockPosFile(),
       JSON.stringify({ x: Math.round(x), y: Math.round(y), orient: orient || dockOrient })
     )
+    // Dock 会「自己飞到屏幕顶部」的排查线索：每次保存都留痕
+    logBoot('dockpos ' + Math.round(x) + ',' + Math.round(y) + ' ' + (orient || dockOrient))
   } catch (e) {
     /* ignore */
   }
@@ -135,11 +147,19 @@ function isVertical(orient) {
   return orient === 'left' || orient === 'right'
 }
 
+// 分辨率切换 / 全屏进出 / 显示器热插拔的中间态里，workArea 可能只有几十甚至 0 像素高。
+// 用这种垃圾尺寸去 clamp 坐标会把 y 压成 area.y（也就是屏幕顶端），再被 saveDockPos
+// 存成新基准——表现出来就是「Dock 自己飞到屏幕最上面」。尺寸不合理时一律不动窗口。
+function areaLooksSane(a) {
+  return !!a && a.width >= 200 && a.height >= 200
+}
+
 // 按目标形态重新布局窗口：横排 780x100，竖排 100x内容高，贴左/右边缘
 function applyDockOrient(orient) {
   if (!dockWin || dockWin.isDestroyed()) return
   const b = dockWin.getBounds()
   const area = screen.getDisplayMatching(b).workArea
+  if (!areaLooksSane(area)) return
   let W, H, x, y
 
   if (orient === 'h') {
@@ -180,10 +200,18 @@ function onDockMoveEnd() {
   if (!dockWin || dockWin.isDestroyed() || orientBusy) return
   // 任务栏让位是程序自己挪的窗口，别当成用户拖放
   if (Date.now() < dockDodgeHold) return
-  // 用户拖过了：以他拖到的位置为准，不再按让位前的基准归位
-  if (dockDodged) dockDodged = false
+  // 让位状态还留着：这次位置变化不是用户拖出来的（真拖动会先清掉状态），
+  // 先把窗口归位，绝不能把临时上移的坐标保存成新基准
+  if (dockDodged) {
+    restoreDockDodge()
+    return
+  }
   const b = dockWin.getBounds()
   const area = screen.getDisplayMatching(b).workArea
+  if (!areaLooksSane(area)) {
+    logBoot('moveend skipped: area ' + area.width + 'x' + area.height)
+    return
+  }
 
   // 吸附距离可配置，设成 0 就是关掉吸附
   const snap = Math.max(0, Number(settings.get().snapEdge) || 0)
@@ -273,6 +301,7 @@ function pollTaskbarDodge() {
     dockDodgeHold = Date.now() + 900
     orientBusy = true
     dockWin.setBounds({ x: b.x, y: b.y - TASKBAR_H, width: b.width, height: b.height })
+    logBoot('dodge ' + b.y + ' -> ' + (b.y - TASKBAR_H))
     setTimeout(() => { orientBusy = false }, 260)
     syncDockAnchor()
   } else if (dockDodged && p.y < bottom - TASKBAR_H - 10) {
@@ -287,10 +316,13 @@ function restoreDockDodge() {
   if (!dockWin || dockWin.isDestroyed()) return
   const b = dockWin.getBounds()
   const area = screen.getDisplayMatching(b).bounds
+  if (!areaLooksSane(area)) return
+  const targetY = Math.min(dockDodgeBaseY, area.y + area.height - b.height - 2)
+  logBoot('undodge ' + b.y + ' -> ' + Math.round(targetY) + ' (base ' + dockDodgeBaseY + ')')
   orientBusy = true
   dockWin.setBounds({
     x: b.x,
-    y: Math.min(dockDodgeBaseY, area.y + area.height - b.height - 2),
+    y: targetY,
     width: b.width,
     height: b.height,
   })
@@ -312,6 +344,7 @@ function syncDockAnchor() {
 function resetDockPosition() {
   if (!dockWin || dockWin.isDestroyed()) return
   const area = screen.getPrimaryDisplay().workArea
+  if (!areaLooksSane(area)) return
   const x = Math.round(area.x + (area.width - DOCK_H_W) / 2)
   const y = Math.round(area.y + area.height - DOCK_H_H - 6)
   orientBusy = true
@@ -379,8 +412,7 @@ function createDock() {
     hideTipNow()
     clearTimeout(posTimer)
     posTimer = setTimeout(onDockMoveEnd, 300)
-  })
-  // Dock 失焦/被隐藏时气泡也不该留着（置顶 + 鼠标穿透，卡住会一直浮着）
+  })  // Dock 失焦/被隐藏时气泡也不该留着（置顶 + 鼠标穿透，卡住会一直浮着）
   dockWin.on('blur', hideTipNow)
   dockWin.on('hide', hideTipNow)
   dockWin.loadFile(path.join(__dirname, 'renderer', 'dock.html'))
@@ -1428,6 +1460,7 @@ ipcMain.on('dock-resize', (event, h) => {
   if (!isVertical(dockOrient)) return
   const b = dockWin.getBounds()
   const area = screen.getDisplayMatching(b).workArea
+  if (!areaLooksSane(area)) return
   const H = Math.min(Math.max(hh + 24, DOCK_V_MIN_H), area.height - 40)
   if (Math.abs(H - b.height) < 4) return
   // 刚切到竖排的 1.8 秒内重新居中；之后保留用户上下拖到的位置
@@ -1707,6 +1740,7 @@ function buildTrayTemplate() {
     { label: '设置…', click: () => createSettings() },
     { label: '刷新图标', click: () => { invalidate(); if (gridWin && !gridWin.isDestroyed()) gridWin.webContents.send('apps-reset'); if (dockWin && !dockWin.isDestroyed()) dockWin.webContents.send('apps-reset') } },
     { label: '修复黑屏（透明失效）', click: () => { surfHealState.fails = 0; healAllSurfaces(true) } },
+    { label: '把 Dock 拉回屏幕底部', click: () => resetDockPosition() },
     { type: 'separator' },
     {
       label: '开机自启',
@@ -1808,6 +1842,10 @@ app.whenReady().then(() => {
     if (!dockWin || dockWin.isDestroyed()) return
     const b = dockWin.getBounds()
     const area = screen.getDisplayMatching(b).workArea
+    if (!areaLooksSane(area)) {
+      logBoot('dmetrics skipped: area ' + area.width + 'x' + area.height)
+      return
+    }
     let x = b.x
     let y = b.y
     if (isVertical(dockOrient)) {
@@ -2016,6 +2054,11 @@ function writeSurfaceBounds() {
 
 function healWindowSurface(win) {
   if (!win || win.isDestroyed()) return
+  // 抖动会触发窗口的 moved 事件，进而让 onDockMoveEnd 去「保存位置」——
+  // 如果此刻 Dock 正处于任务栏让位的临时上移状态，就会把临时位置存成新基准，
+  // 反复几次 Dock 就一路漂到屏幕顶部。修表面期间一律按程序移动处理。
+  const isDock = win === dockWin
+  if (isDock) orientBusy = true
   try {
     const b = win.getBounds()
     win.setBounds({ x: b.x, y: b.y, width: b.width + 1, height: b.height + 1 })
@@ -2025,6 +2068,11 @@ function healWindowSurface(win) {
   }
   try { win.setBackgroundColor('#00000000') } catch (e) { /* ignore */ }
   try { win.webContents.invalidate() } catch (e) { /* ignore */ }
+  if (isDock) {
+    setTimeout(() => {
+      orientBusy = false
+    }, 420)
+  }
 }
 
 // 全屏应用在前台时不碰任何窗口（改了就会从游戏画面上冒出来）；force 只给托盘手动修复用
