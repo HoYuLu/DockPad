@@ -560,6 +560,12 @@
     });
   });
 
+  // 鼠标直接划出整个 Dock 窗口时，个别按钮的 mouseleave 可能收不到
+  // （窗口被面板盖住、快速划过都算），这里兜一层窗口级的离开事件
+  document.documentElement.addEventListener('mouseleave', () => {
+    window.dockpad.hidePreview();
+  });
+
   window.addEventListener('resize', reportGridAnchor);
   // 启动、切横竖排、增删应用都会让按钮换位置，每次渲染完补报一次
   new ResizeObserver(reportGridAnchor).observe(document.getElementById('apps'));

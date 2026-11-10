@@ -376,10 +376,13 @@ function createDock() {
   dockWin.on('moved', () => {
     if (orientBusy) return
     // 拖动中预览浮窗留在原地会很怪，直接收起来
-    if (previewWin && !previewWin.isDestroyed() && previewWin.isVisible()) previewWin.hide()
+    hideTipNow()
     clearTimeout(posTimer)
     posTimer = setTimeout(onDockMoveEnd, 300)
   })
+  // Dock 失焦/被隐藏时气泡也不该留着（置顶 + 鼠标穿透，卡住会一直浮着）
+  dockWin.on('blur', hideTipNow)
+  dockWin.on('hide', hideTipNow)
   dockWin.loadFile(path.join(__dirname, 'renderer', 'dock.html'))
   dockWin.webContents.on('did-finish-load', () => {
     if (dockWin && !dockWin.isDestroyed() && !dockWin.webContents.isDestroyed()) {
@@ -549,6 +552,51 @@ function schedulePreviewIdleClose() {
     previewWin.destroy()
     previewWin = null
   }, 120000)
+}
+
+// 气泡的兜底关闭：只靠渲染进程的 mouseleave 会漏（快速划过、面板盖住 Dock、
+// 窗口失焦都可能收不到），而 previewWin 是 screen-saver 级置顶 + 鼠标穿透，
+// 一旦卡住就一直浮在最上面、连点都点不掉。这里直接盯光标：
+// 光标离开 Dock 区域就隐藏；再给一个绝对上限防止极端情况下长驻。
+let tipCursorTimer = null
+let tipShownAt = 0
+
+function stopTipCursorWatch() {
+  if (tipCursorTimer) {
+    clearInterval(tipCursorTimer)
+    tipCursorTimer = null
+  }
+}
+
+function watchTipCursor(maxMs) {
+  stopTipCursorWatch()
+  tipShownAt = Date.now()
+  tipCursorTimer = setInterval(() => {
+    if (!previewWin || previewWin.isDestroyed() || !previewWin.isVisible()) {
+      stopTipCursorWatch()
+      return
+    }
+    const expired = maxMs && Date.now() - tipShownAt > maxMs
+    let inside = false
+    if (dockWin && !dockWin.isDestroyed()) {
+      const db = dockWin.getBounds()
+      const p = screen.getCursorScreenPoint()
+      inside = p.x >= db.x - 10 && p.x <= db.x + db.width + 10
+        && p.y >= db.y - 6 && p.y <= db.y + db.height + 6
+    }
+    if (inside && !expired) return
+    previewWin.hide()
+    schedulePreviewIdleClose()
+    stopTipCursorWatch()
+  }, 500)
+}
+
+function hideTipNow() {
+  stopTipCursorWatch()
+  if (previewWin && !previewWin.isDestroyed() && previewWin.isVisible()) {
+    previewWin.hide()
+    schedulePreviewIdleClose()
+  }
 }
 
 function createSettings() {
@@ -732,6 +780,8 @@ async function showTipCard(url, label, anchorX, anchorY, textW) {
   previewWin.setPosition(x, y)
   previewWin.webContents.send('preview-src', { src: url || '', name: text })
   previewWin.showInactive()
+  // 光标离开 Dock 就收起；纯文字提示额外限 12 秒，缩略图卡片限 25 秒（防极端情况长驻）
+  watchTipCursor(url ? 25000 : 12000)
   return true
 }
 
@@ -749,8 +799,7 @@ ipcMain.handle('show-name-tip', async (event, label, anchorX, anchorY, textW) =>
 })
 
 ipcMain.on('hide-preview', () => {
-  if (previewWin && !previewWin.isDestroyed()) previewWin.hide()
-  schedulePreviewIdleClose()
+  hideTipNow()
 })
 
 // ---------- 设置 ----------
@@ -1036,6 +1085,8 @@ function showGrid(anchor) {
   )
   // 显示前先修一次透明表面（隐藏状态重建无闪烁）：全屏游戏打碎过表面的话，这里能直接救回来
   healWindowSurface(gridWin)
+  // 面板要从按钮位置长出来，那会儿对应的气泡必须收起（点击时鼠标还在 Dock 上，不会触发 mouseleave）
+  hideTipNow()
   gridWin.show()
   gridWin.focus()
   // 兜底：动画事件没回来也要把透明边收掉
