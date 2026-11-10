@@ -1960,11 +1960,14 @@ while ($true) {
   if ($p.Count -lt 4) { continue }
   $x = [int]$p[0]; $y = [int]$p[1]; $w = [int]$p[2]; $h = [int]$p[3]
   $lx = $x + 6; $rx = $x + $w - 7; $cy = $y + 3
+  # 参考点优先取窗口上方；Dock 贴屏幕顶边时上方越界，改用窗口下方
+  $ry = $y - 12
+  if ($ry -lt 0) { $ry = $y + $h + 12 }
   try {
     $l1 = Sample-Pixel $lx $cy
-    $l2 = Sample-Pixel $lx ($y - 12)
+    $l2 = Sample-Pixel $lx $ry
     $r1 = Sample-Pixel $rx $cy
-    $r2 = Sample-Pixel $rx ($y - 12)
+    $r2 = Sample-Pixel $rx $ry
     $bad = (Test-Black $l1) -and (Test-Black $r1) -and (Test-Diff $l1 $l2) -and (Test-Diff $r1 $r2)
     if ($bad) {
       $hits++
@@ -2077,66 +2080,145 @@ function cleanChildEnv() {
   return out
 }
 
-function startSurfaceWatchdog() {
-  if (surfWatchProc) return
+// 探针优先用编译好的 C# 小程序（常驻 6–10MB），编译不出来就回退到脚本版（约 90MB）。
+// 源码随包发布、编译产物放用户数据目录：仓库里只有文本，不需要提交二进制。
+function probeSrcPath() {
+  return path.join(__dirname, 'surface-probe.cs')
+}
+
+function probeExePath() {
+  return path.join(app.getPath('appData'), 'dockpad', 'surface-probe.exe')
+}
+
+// .NET Framework 4.x 的 csc 在所有 Win10/11 上都有，64 位优先
+function cscPath() {
+  const root = process.env.SystemRoot || 'C:\\Windows'
+  const list = [
+    path.join(root, 'Microsoft.NET', 'Framework64', 'v4.0.30319', 'csc.exe'),
+    path.join(root, 'Microsoft.NET', 'Framework', 'v4.0.30319', 'csc.exe'),
+  ]
+  for (const p of list) {
+    try { if (fs.existsSync(p)) return p } catch (e) { /* ignore */ }
+  }
+  return null
+}
+
+// 源码比 exe 新就重编译；回调拿到 exe 路径，null 表示不可用（调用方回退脚本版）
+function ensureProbeExe(cb) {
+  let done = false
+  const finish = (v) => { if (!done) { done = true; cb(v) } }
   try {
-    const dir = path.join(app.getPath('appData'), 'dockpad')
-    fs.mkdirSync(dir, { recursive: true })
-    const ps1 = path.join(dir, 'surface-watch.ps1')
-    fs.writeFileSync(
-      ps1,
-      SURF_PS1.replace('__BOUNDSFILE__', surfaceBoundsFile()).replace('__PARENTPID__', String(process.pid))
+    const src = probeSrcPath()
+    const exe = probeExePath()
+    if (!fs.existsSync(src)) return finish(null)
+    const srcStat = fs.statSync(src)
+    if (fs.existsSync(exe) && fs.statSync(exe).mtimeMs >= srcStat.mtimeMs) return finish(exe)
+    const csc = cscPath()
+    if (!csc) {
+      logBoot('probe-compile skipped: csc not found')
+      return finish(null)
+    }
+    try { fs.mkdirSync(path.dirname(exe), { recursive: true }) } catch (e) { /* ignore */ }
+    execFile(
+      csc,
+      ['/nologo', '/target:exe', '/optimize+', '/out:' + exe, '/r:System.Drawing.dll', src],
+      { timeout: 90000, windowsHide: true, env: cleanChildEnv() },
+      (err, stdout, stderr) => {
+        const ok = !err && fs.existsSync(exe)
+        logBoot('probe-compile ' + (ok ? 'ok' : 'failed: ' + String((err && err.message) || stderr || '').slice(0, 300)))
+        finish(ok ? exe : null)
+      }
     )
-    const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
-    surfWatchProc = spawn(
-      psExe,
-      ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1],
-      { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: cleanChildEnv() }
-    )
-    let buf = ''
-    surfWatchProc.stdout.on('data', (d) => {
-      buf += String(d)
-      let i
-      while ((i = buf.indexOf('\n')) >= 0) {
-        const line = buf.slice(0, i).trim()
-        buf = buf.slice(i + 1)
-        if (line.indexOf('BROKEN') === 0) {
-          onSurfaceBroken()
-        } else if (line.indexOf('FS ') === 0) {
-          // 探针上报前台是否被全屏应用占着。全屏期间一个窗口动作都不能做，
-          // 否则 Dock / 面板 / 重启都会从游戏画面上冒出来
-          const rest = line.slice(3).trim()
-          const v = rest.charAt(0) === '1'
-          if (v !== surfaceFullScreen) {
-            surfaceFullScreen = v
-            logBoot('fullscreen=' + rest)
-            writeSurfaceBounds()
-            if (!v) {
-              // 退回桌面：游戏期间被打碎的表面在这里一次性补修
-              setTimeout(() => { if (!surfaceFullScreen) healAllSurfaces() }, 900)
-            }
+  } catch (e) {
+    logBoot('probe-compile exception ' + e.message)
+    finish(null)
+  }
+}
+
+// 两种探针的 stdout 协议一样，接线上共用
+function attachProbeOutput(proc) {
+  let buf = ''
+  proc.stdout.on('data', (d) => {
+    buf += String(d)
+    let i
+    while ((i = buf.indexOf('\n')) >= 0) {
+      const line = buf.slice(0, i).trim()
+      buf = buf.slice(i + 1)
+      if (line.indexOf('BROKEN') === 0) {
+        onSurfaceBroken()
+      } else if (line.indexOf('FS ') === 0) {
+        // 探针上报前台是否被全屏应用占着。全屏期间一个窗口动作都不能做，
+        // 否则 Dock / 面板 / 重启都会从游戏画面上冒出来
+        const rest = line.slice(3).trim()
+        const v = rest.charAt(0) === '1'
+        if (v !== surfaceFullScreen) {
+          surfaceFullScreen = v
+          logBoot('fullscreen=' + rest)
+          writeSurfaceBounds()
+          if (!v) {
+            // 退回桌面：游戏期间被打碎的表面在这里一次性补修
+            setTimeout(() => { if (!surfaceFullScreen) healAllSurfaces() }, 900)
           }
         }
       }
-    })
-    surfWatchProc.on('exit', () => {
-      surfWatchProc = null
-      // 探针没了就别再相信"全屏中"这个状态，免得退回桌面后永远不检测
-      if (surfaceFullScreen) {
-        surfaceFullScreen = false
-        writeSurfaceBounds()
-      }
-      // 异常退出后 10 秒补一次，最多连续重试 3 次（防止死循环刷进程）
-      if (surfRestartTries < 3) {
-        surfRestartTries++
-        setTimeout(() => { if (!surfWatchProc) startSurfaceWatchdog() }, 10000)
-      }
-    })
-    // 稳定跑满 1 分钟才算这轮启动成功，重置重试计数
-    setTimeout(() => { if (surfWatchProc) surfRestartTries = 0 }, 60000)
-  } catch (e) {
+    }
+  })
+  proc.on('exit', () => {
     surfWatchProc = null
-  }
+    // 探针没了就别再相信"全屏中"这个状态，免得退回桌面后永远不检测
+    if (surfaceFullScreen) {
+      surfaceFullScreen = false
+      writeSurfaceBounds()
+    }
+    // 异常退出后 10 秒补一次，最多连续重试 3 次（防止死循环刷进程）
+    if (surfRestartTries < 3) {
+      surfRestartTries++
+      setTimeout(() => { if (!surfWatchProc) startSurfaceWatchdog() }, 10000)
+    }
+  })
+  // 稳定跑满 1 分钟才算这轮启动成功，重置重试计数
+  setTimeout(() => { if (surfWatchProc === proc) surfRestartTries = 0 }, 60000)
+}
+
+function startProbeScript() {
+  const dir = path.join(app.getPath('appData'), 'dockpad')
+  fs.mkdirSync(dir, { recursive: true })
+  const ps1 = path.join(dir, 'surface-watch.ps1')
+  fs.writeFileSync(
+    ps1,
+    SURF_PS1.replace('__BOUNDSFILE__', surfaceBoundsFile()).replace('__PARENTPID__', String(process.pid))
+  )
+  const psExe = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe')
+  const proc = spawn(
+    psExe,
+    ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', ps1],
+    { stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true, env: cleanChildEnv() }
+  )
+  surfWatchProc = proc
+  attachProbeOutput(proc)
+}
+
+function startSurfaceWatchdog() {
+  if (surfWatchProc) return
+  ensureProbeExe((exe) => {
+    if (surfWatchProc) return
+    try {
+      if (exe) {
+        const proc = spawn(exe, [surfaceBoundsFile(), String(process.pid)], {
+          stdio: ['ignore', 'pipe', 'ignore'],
+          windowsHide: true,
+          env: cleanChildEnv(),
+        })
+        surfWatchProc = proc
+        attachProbeOutput(proc)
+      } else {
+        startProbeScript()
+      }
+    } catch (e) {
+      logBoot('probe-spawn failed: ' + e.message)
+      try { startProbeScript() } catch (e2) { surfWatchProc = null }
+    }
+  })
   // 拖动 / 自动隐藏 / 分辨率变化都会改变窗口矩形，低频同步给探针（只建一个定时器）
   if (!surfaceBoundsTimer) {
     surfaceBoundsTimer = setInterval(writeSurfaceBounds, 800)
