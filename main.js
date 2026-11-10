@@ -1983,21 +1983,29 @@ function surfaceBoundsFile() {
   return path.join(app.getPath('appData'), 'dockpad', 'surface-bounds.txt')
 }
 
-// 把 Dock 窗口的物理像素坐标写给探针；全屏应用在前台、网格面板开着或 Dock 隐藏时暂停检测
+// 把 Dock 窗口的物理像素坐标写给探针；全屏应用在前台、网格面板开着或 Dock 隐藏时暂停检测。
+// Dock 位置一次不动就会一直是同一行字，所以内容没变就跳过写盘（探针那边读到的还是旧值），
+// 只保留一分钟一次的强制刷新，防止文件被外部清掉。
+let lastBoundsText = ''
+let lastBoundsAt = 0
+
 function writeSurfaceBounds() {
   try {
+    let out
     if (surfaceFullScreen
       || !dockWin || dockWin.isDestroyed() || !dockWin.isVisible()
       || (gridWin && !gridWin.isDestroyed() && gridWin.isVisible())) {
-      fs.writeFileSync(surfaceBoundsFile(), 'hidden')
-      return
+      out = 'hidden'
+    } else {
+      const b = dockWin.getBounds()
+      const sf = screen.getDisplayMatching(b).scaleFactor || 1
+      out = [Math.round(b.x * sf), Math.round(b.y * sf), Math.round(b.width * sf), Math.round(b.height * sf)].join(' ')
     }
-    const b = dockWin.getBounds()
-    const sf = screen.getDisplayMatching(b).scaleFactor || 1
-    fs.writeFileSync(
-      surfaceBoundsFile(),
-      [Math.round(b.x * sf), Math.round(b.y * sf), Math.round(b.width * sf), Math.round(b.height * sf)].join(' ')
-    )
+    const now = Date.now()
+    if (out === lastBoundsText && now - lastBoundsAt < 60000) return
+    lastBoundsText = out
+    lastBoundsAt = now
+    fs.writeFileSync(surfaceBoundsFile(), out)
   } catch (e) {
     /* ignore */
   }
