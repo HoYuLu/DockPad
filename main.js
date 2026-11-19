@@ -1739,7 +1739,7 @@ function buildTrayTemplate() {
     { label: '扫描文件夹添加应用…', click: () => runScanDialog() },
     { label: '设置…', click: () => createSettings() },
     { label: '刷新图标', click: () => { invalidate(); if (gridWin && !gridWin.isDestroyed()) gridWin.webContents.send('apps-reset'); if (dockWin && !dockWin.isDestroyed()) dockWin.webContents.send('apps-reset') } },
-    { label: '修复黑屏（透明失效）', click: () => { surfHealState.fails = 0; healAllSurfaces(true) } },
+    { label: '修复黑屏（重建 Dock 窗口）', click: () => { surfHealState.fails = 0; rebuildDockWindows() } },
     { label: '把 Dock 拉回屏幕底部', click: () => resetDockPosition() },
     { type: 'separator' },
     {
@@ -2075,6 +2075,36 @@ function healWindowSurface(win) {
   }
 }
 
+// 透明表面彻底坏掉时的最后手段：把窗口整个重建一遍。
+// 只抖尺寸（healAllSurfaces）对「DWM 把整窗合成成不透明黑」这种情况经常无效，
+// 因为窗口的合成表面已经废了；销毁重建才能真正拿到一张新的透明表面。
+// 重建只影响窗口，设置、Dock 位置、应用库都在磁盘上，不受影响。
+function rebuildDockWindows() {
+  try {
+    logBoot('rebuild-windows')
+    if (previewWin && !previewWin.isDestroyed()) {
+      try { previewWin.destroy() } catch (e) { /* ignore */ }
+    }
+    previewWin = null
+    previewReady = Promise.resolve()
+    if (gridWin && !gridWin.isDestroyed()) {
+      try { gridWin.destroy() } catch (e) { /* ignore */ }
+    }
+    gridWin = null
+    if (dockWin && !dockWin.isDestroyed()) {
+      try { dockWin.destroy() } catch (e) { /* ignore */ }
+    }
+    dockWin = null
+    dockAutoHidden = false
+    dockRestoreBounds = null
+    dockLastHoverAt = 0
+    dockDodged = false
+    createDock()
+  } catch (e) {
+    logBoot('rebuild failed: ' + e.message)
+  }
+}
+
 // 全屏应用在前台时不碰任何窗口（改了就会从游戏画面上冒出来）；force 只给托盘手动修复用
 function healAllSurfaces(force) {
   if (surfaceFullScreen && !force) return
@@ -2093,7 +2123,13 @@ function onSurfaceBroken() {
   surfHealState.lastAt = now
   surfHealState.fails++
   logBoot('surface-broken fails=' + surfHealState.fails)
-  healAllSurfaces()
+  // 分级处理：第一次只抖尺寸（最轻）；第二次直接重建窗口（真正能拿到新表面）；
+  // 第三次还不行才重启进程。之前只有「抖动 → 重启」，中间的修复力度是断档的。
+  if (surfHealState.fails === 1) {
+    healAllSurfaces()
+  } else if (surfHealState.fails === 2) {
+    rebuildDockWindows()
+  }
   // 60 秒内没有新报就当作修好了：fails 变成「连续失败」而不是累计误报
   if (surfSettleTimer) clearTimeout(surfSettleTimer)
   surfSettleTimer = setTimeout(() => {
